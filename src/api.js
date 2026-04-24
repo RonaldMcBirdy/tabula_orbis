@@ -42,6 +42,36 @@ export async function updateFeature(featureId, payload) {
   });
 }
 
+export async function fetchFeatureEvents(featureId) {
+  return requestJson(`/api/features/${encodeURIComponent(featureId)}/events`);
+}
+
+export async function createFeatureEvent(featureId, payload) {
+  return requestJson(`/api/features/${encodeURIComponent(featureId)}/events`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateFeatureEvent(featureId, eventId, payload) {
+  return requestJson(
+    `/api/features/${encodeURIComponent(featureId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function deleteFeatureEvent(featureId, eventId) {
+  return requestJson(
+    `/api/features/${encodeURIComponent(featureId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "DELETE",
+    },
+  );
+}
+
 export async function fetchProvinces() {
   return requestJson("/api/provinces");
 }

@@ -1,6 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { fetchFeatures, updateFeature } from "../api.js";
+import {
+  createFeatureEvent,
+  deleteFeatureEvent,
+  fetchFeatureEvents,
+  fetchFeatures,
+  updateFeature,
+  updateFeatureEvent,
+} from "../api.js";
 
 const SETTLEMENT_CATEGORIES = [
   { id: "towns", label: "Towns" },
@@ -9,6 +16,62 @@ const SETTLEMENT_CATEGORIES = [
 ];
 
 const PAGE_SIZE = 25;
+const EVENT_TYPES = [
+  "name_change",
+  "conquest",
+  "loss",
+  "population",
+  "theo_political_status",
+  "thematic_admin",
+  "notable_event",
+];
+
+const EVENT_TYPE_LABELS = {
+  name_change: "Name change",
+  conquest: "Conquest",
+  loss: "Loss",
+  population: "Population",
+  theo_political_status: "Theo-political status",
+  thematic_admin: "Thematic administration",
+  notable_event: "Notable event",
+};
+
+const EMPTY_EVENT_DRAFT = {
+  id: null,
+  eventType: "notable_event",
+  startDate: "",
+  endDate: "",
+  payloadText: "{\n  \"title\": \"\"\n}",
+};
+
+function formatEventRange(event) {
+  return event.endDate ? `${event.startDate} - ${event.endDate}` : event.startDate;
+}
+
+function eventSummary(event) {
+  const payload = event.payload ?? {};
+  return (
+    payload.title ||
+    payload.new_name ||
+    payload.status ||
+    payload.theme ||
+    payload.actor ||
+    payload.polity ||
+    payload.value ||
+    payload.note ||
+    ""
+  );
+}
+
+function draftFromEvent(event) {
+  return {
+    id: event.id,
+    eventType: event.eventType,
+    startDate: event.startDate,
+    endDate: event.endDate ?? "",
+    payloadText: JSON.stringify(event.payload ?? {}, null, 2),
+  };
+}
 
 export default function ResearchPage() {
   const navigate = useNavigate();
@@ -20,6 +83,10 @@ export default function ResearchPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
+  const [featureEvents, setFeatureEvents] = useState([]);
+  const [eventsState, setEventsState] = useState("idle");
+  const [eventDraft, setEventDraft] = useState(EMPTY_EVENT_DRAFT);
+  const [eventError, setEventError] = useState("");
   const [editedIds, setEditedIds] = useState(() => new Set());
 
   useEffect(() => {
@@ -90,7 +157,7 @@ export default function ResearchPage() {
     setEditingId(null);
   }, [categoryFilter, searchQuery]);
 
-  function startEdit(feature) {
+  async function startEdit(feature) {
     setEditingId(feature.id);
     setEditValues({
       name: feature.properties.name ?? "",
@@ -101,11 +168,72 @@ export default function ResearchPage() {
       validFrom: feature.properties.validFrom ?? feature.properties.metadata?.startDate ?? "",
       validTo: feature.properties.validTo ?? feature.properties.metadata?.endDate ?? "",
     });
+    setFeatureEvents([]);
+    setEventDraft(EMPTY_EVENT_DRAFT);
+    setEventError("");
+    setEventsState("loading");
+    try {
+      const events = await fetchFeatureEvents(feature.id);
+      setFeatureEvents(events);
+      setEventsState("ready");
+    } catch {
+      setFeatureEvents([]);
+      setEventsState("error");
+    }
   }
 
   function cancelEdit() {
     setEditingId(null);
     setEditValues({});
+    setFeatureEvents([]);
+    setEventsState("idle");
+    setEventDraft(EMPTY_EVENT_DRAFT);
+    setEventError("");
+  }
+
+  async function saveEventDraft(feature) {
+    setEventError("");
+    let payload;
+    try {
+      payload = eventDraft.payloadText.trim() ? JSON.parse(eventDraft.payloadText) : {};
+    } catch {
+      setEventError("Payload must be valid JSON.");
+      return;
+    }
+    const body = {
+      eventType: eventDraft.eventType,
+      startDate: eventDraft.startDate,
+      endDate: eventDraft.endDate || null,
+      payload,
+    };
+    try {
+      const saved = eventDraft.id
+        ? await updateFeatureEvent(feature.id, eventDraft.id, body)
+        : await createFeatureEvent(feature.id, body);
+      setFeatureEvents((current) =>
+        eventDraft.id
+          ? current.map((event) => (event.id === saved.id ? saved : event))
+          : [...current, saved].sort((a, b) => a.startDate.localeCompare(b.startDate)),
+      );
+      setEventDraft(EMPTY_EVENT_DRAFT);
+      setEditedIds((current) => new Set([...current, feature.id]));
+    } catch (error) {
+      setEventError(error.message || "Event could not be saved.");
+    }
+  }
+
+  async function removeEvent(feature, eventId) {
+    setEventError("");
+    try {
+      await deleteFeatureEvent(feature.id, eventId);
+      setFeatureEvents((current) => current.filter((event) => event.id !== eventId));
+      if (eventDraft.id === eventId) {
+        setEventDraft(EMPTY_EVENT_DRAFT);
+      }
+      setEditedIds((current) => new Set([...current, feature.id]));
+    } catch (error) {
+      setEventError(error.message || "Event could not be deleted.");
+    }
   }
 
   async function commitEdit(feature) {
@@ -324,6 +452,142 @@ export default function ResearchPage() {
                                   }
                                   className="db-input db-input--mono"
                                 />
+                              </div>
+                              <div className="db-field db-field--full">
+                                <div className="db-events-panel">
+                                  <div className="db-events-header">
+                                    <h2>Site history</h2>
+                                    <span>
+                                      {eventsState === "ready"
+                                        ? `${featureEvents.length} event${featureEvents.length === 1 ? "" : "s"}`
+                                        : eventsState === "loading"
+                                          ? "Loading..."
+                                          : eventsState === "error"
+                                            ? "Unavailable"
+                                            : ""}
+                                    </span>
+                                  </div>
+
+                                  {eventsState === "error" && (
+                                    <p className="db-event-error">Events could not be loaded.</p>
+                                  )}
+                                  {eventError && <p className="db-event-error">{eventError}</p>}
+
+                                  {eventsState === "ready" && featureEvents.length > 0 && (
+                                    <div className="db-event-list">
+                                      {featureEvents.map((event) => (
+                                        <div className="db-event-row" key={event.id}>
+                                          <div>
+                                            <time>{formatEventRange(event)}</time>
+                                            <strong>
+                                              {EVENT_TYPE_LABELS[event.eventType] ?? event.eventType}
+                                            </strong>
+                                            {eventSummary(event) && <span>{eventSummary(event)}</span>}
+                                          </div>
+                                          <div className="db-event-actions">
+                                            <button
+                                              type="button"
+                                              className="db-btn"
+                                              onClick={() => setEventDraft(draftFromEvent(event))}
+                                            >
+                                              Edit
+                                            </button>
+                                            <button
+                                              type="button"
+                                              className="db-btn db-btn--danger"
+                                              onClick={() => removeEvent(feature, event.id)}
+                                            >
+                                              Delete
+                                            </button>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+
+                                  <div className="db-event-form">
+                                    <div className="db-field">
+                                      <label>Event Type</label>
+                                      <select
+                                        value={eventDraft.eventType}
+                                        onChange={(e) =>
+                                          setEventDraft((draft) => ({
+                                            ...draft,
+                                            eventType: e.target.value,
+                                          }))
+                                        }
+                                        className="db-input"
+                                      >
+                                        {EVENT_TYPES.map((type) => (
+                                          <option key={type} value={type}>
+                                            {EVENT_TYPE_LABELS[type]}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <div className="db-field">
+                                      <label>Start Date</label>
+                                      <input
+                                        type="date"
+                                        value={eventDraft.startDate}
+                                        onChange={(e) =>
+                                          setEventDraft((draft) => ({
+                                            ...draft,
+                                            startDate: e.target.value,
+                                          }))
+                                        }
+                                        className="db-input"
+                                      />
+                                    </div>
+                                    <div className="db-field">
+                                      <label>End Date</label>
+                                      <input
+                                        type="date"
+                                        value={eventDraft.endDate}
+                                        onChange={(e) =>
+                                          setEventDraft((draft) => ({
+                                            ...draft,
+                                            endDate: e.target.value,
+                                          }))
+                                        }
+                                        className="db-input"
+                                      />
+                                    </div>
+                                    <div className="db-field db-field--full">
+                                      <label>Payload JSON</label>
+                                      <textarea
+                                        rows={5}
+                                        value={eventDraft.payloadText}
+                                        onChange={(e) =>
+                                          setEventDraft((draft) => ({
+                                            ...draft,
+                                            payloadText: e.target.value,
+                                          }))
+                                        }
+                                        className="db-input db-input--mono"
+                                      />
+                                    </div>
+                                    <div className="db-event-form-actions">
+                                      <button
+                                        type="button"
+                                        className="db-btn db-btn--save"
+                                        onClick={() => saveEventDraft(feature)}
+                                        disabled={!eventDraft.startDate}
+                                      >
+                                        {eventDraft.id ? "Update Event" : "Add Event"}
+                                      </button>
+                                      {eventDraft.id && (
+                                        <button
+                                          type="button"
+                                          className="db-btn db-btn--cancel"
+                                          onClick={() => setEventDraft(EMPTY_EVENT_DRAFT)}
+                                        >
+                                          New Event
+                                        </button>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
                             </div>
                             <div className="db-edit-actions">

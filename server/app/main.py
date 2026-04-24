@@ -17,10 +17,13 @@ from server.app.geojson import (
     polygon_from_latlngs,
 )
 from server.app.importer import clean_html, import_kmz, slugify
-from server.app.models import AtlasSource, Category, Feature, FeatureMetadata, Province, Style
+from server.app.models import AtlasSource, Category, Feature, FeatureEvent, FeatureMetadata, Province, Style
 from server.app.schemas import (
     CategoryResponse,
     FeatureCreate,
+    FeatureEventCreate,
+    FeatureEventResponse,
+    FeatureEventUpdate,
     FeaturePayload,
     FeatureUpdate,
     HealthResponse,
@@ -31,6 +34,26 @@ from server.app.schemas import (
 )
 
 settings = get_settings()
+
+FEATURE_EVENT_TYPES = {
+    "name_change",
+    "conquest",
+    "loss",
+    "population",
+    "theo_political_status",
+    "thematic_admin",
+    "notable_event",
+}
+
+EVENT_PAYLOAD_KEYS = {
+    "name_change": {"old_name", "new_name", "source_title", "source_url", "source_note", "note"},
+    "conquest": {"actor", "polity", "from_polity", "to_polity", "source_title", "source_url", "source_note", "note"},
+    "loss": {"actor", "polity", "from_polity", "to_polity", "source_title", "source_url", "source_note", "note"},
+    "population": {"value", "unit", "estimate_type", "source_title", "source_url", "source_note", "note"},
+    "theo_political_status": {"status", "source_title", "source_url", "source_note", "note"},
+    "thematic_admin": {"theme", "administrative_unit", "source_title", "source_url", "source_note", "note"},
+    "notable_event": {"title", "description", "source_title", "source_url", "source_note", "note"},
+}
 
 app = FastAPI(title=settings.api_title)
 app.add_middleware(
@@ -70,6 +93,26 @@ def validate_feature_dates(valid_from: date | None, valid_to: date | None) -> No
         raise HTTPException(status_code=400, detail="validFrom must be on or before validTo")
 
 
+def normalize_event_type(event_type: str) -> str:
+    normalized = event_type.strip().lower()
+    if normalized not in FEATURE_EVENT_TYPES:
+        raise HTTPException(status_code=400, detail=f"eventType must be one of: {', '.join(sorted(FEATURE_EVENT_TYPES))}")
+    return normalized
+
+
+def validate_event_dates(start_date: date, end_date: date | None) -> None:
+    if end_date and start_date > end_date:
+        raise HTTPException(status_code=400, detail="startDate must be on or before endDate")
+
+
+def validate_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    allowed_keys = EVENT_PAYLOAD_KEYS[event_type]
+    extra_keys = sorted(set(payload) - allowed_keys)
+    if extra_keys:
+        raise HTTPException(status_code=400, detail=f"Unsupported payload field(s): {', '.join(extra_keys)}")
+    return {key: value for key, value in payload.items() if value not in (None, "")}
+
+
 def metadata_dict(feature: Feature) -> dict[str, str]:
     return {entry.key: entry.value for entry in feature.metadata_entries}
 
@@ -93,6 +136,40 @@ def feature_to_geojson(session: Session, feature: Feature) -> dict[str, Any]:
             "fillColor": feature.style.fill_color if feature.style else None,
         },
     }
+
+
+def event_to_response(event: FeatureEvent) -> FeatureEventResponse:
+    return FeatureEventResponse(
+        id=event.id,
+        featureId=event.feature_id,
+        eventType=event.event_type,
+        startDate=event.start_date.isoformat(),
+        endDate=event.end_date.isoformat() if event.end_date else None,
+        payload=event.payload_json,
+        createdAt=event.created_at.isoformat() if event.created_at else None,
+        updatedAt=event.updated_at.isoformat() if event.updated_at else None,
+    )
+
+
+def get_live_feature(session: Session, feature_id: str) -> Feature:
+    feature = session.scalar(select(Feature).where(Feature.id == feature_id, Feature.deleted_at.is_(None)))
+    if feature is None:
+        raise HTTPException(status_code=404, detail="Feature not found")
+    return feature
+
+
+def get_live_event(session: Session, feature_id: str, event_id: str) -> FeatureEvent:
+    get_live_feature(session, feature_id)
+    event = session.scalar(
+        select(FeatureEvent).where(
+            FeatureEvent.id == event_id,
+            FeatureEvent.feature_id == feature_id,
+            FeatureEvent.deleted_at.is_(None),
+        )
+    )
+    if event is None:
+        raise HTTPException(status_code=404, detail="Feature event not found")
+    return event
 
 
 def get_category(session: Session, slug_or_label: str) -> Category:
@@ -319,6 +396,79 @@ def delete_feature(feature_id: str, session: Session = Depends(get_session)) -> 
     if feature is None or feature.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Feature not found")
     feature.deleted_at = datetime.now(timezone.utc)
+    session.commit()
+    return {"deleted": True}
+
+
+@app.get("/api/features/{feature_id}/events", response_model=list[FeatureEventResponse])
+def list_feature_events(feature_id: str, session: Session = Depends(get_session)) -> list[FeatureEventResponse]:
+    get_live_feature(session, feature_id)
+    events = session.scalars(
+        select(FeatureEvent)
+        .where(FeatureEvent.feature_id == feature_id, FeatureEvent.deleted_at.is_(None))
+        .order_by(FeatureEvent.start_date, FeatureEvent.end_date, FeatureEvent.event_type)
+    ).all()
+    return [event_to_response(event) for event in events]
+
+
+@app.post("/api/features/{feature_id}/events", response_model=FeatureEventResponse)
+def create_feature_event(
+    feature_id: str,
+    payload: FeatureEventCreate,
+    session: Session = Depends(get_session),
+) -> FeatureEventResponse:
+    get_live_feature(session, feature_id)
+    event_type = normalize_event_type(payload.eventType)
+    start_date = parse_iso_date(payload.startDate, "startDate")
+    if start_date is None:
+        raise HTTPException(status_code=400, detail="startDate is required")
+    end_date = parse_iso_date(payload.endDate, "endDate")
+    validate_event_dates(start_date, end_date)
+    event = FeatureEvent(
+        id=payload.id or f"event-{uuid4()}",
+        feature_id=feature_id,
+        event_type=event_type,
+        start_date=start_date,
+        end_date=end_date,
+        payload_json=validate_event_payload(event_type, payload.payload),
+    )
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    return event_to_response(event)
+
+
+@app.patch("/api/features/{feature_id}/events/{event_id}", response_model=FeatureEventResponse)
+def update_feature_event(
+    feature_id: str,
+    event_id: str,
+    payload: FeatureEventUpdate,
+    session: Session = Depends(get_session),
+) -> FeatureEventResponse:
+    event = get_live_event(session, feature_id, event_id)
+    event_type = event.event_type
+    if payload.eventType is not None:
+        event_type = normalize_event_type(payload.eventType)
+        event.event_type = event_type
+    if "startDate" in payload.model_fields_set:
+        start_date = parse_iso_date(payload.startDate, "startDate")
+        if start_date is None:
+            raise HTTPException(status_code=400, detail="startDate is required")
+        event.start_date = start_date
+    if "endDate" in payload.model_fields_set:
+        event.end_date = parse_iso_date(payload.endDate, "endDate")
+    validate_event_dates(event.start_date, event.end_date)
+    if payload.payload is not None:
+        event.payload_json = validate_event_payload(event_type, payload.payload)
+    session.commit()
+    session.refresh(event)
+    return event_to_response(event)
+
+
+@app.delete("/api/features/{feature_id}/events/{event_id}")
+def delete_feature_event(feature_id: str, event_id: str, session: Session = Depends(get_session)) -> dict[str, bool]:
+    event = get_live_event(session, feature_id, event_id)
+    event.deleted_at = datetime.now(timezone.utc)
     session.commit()
     return {"deleted": True}
 

@@ -1,6 +1,6 @@
 # Tabula Orbis - Architectural Memo & Roadmap
 
-_Last updated: 2026-04-24 - Phase 1 complete_
+_Last updated: 2026-04-24 - Phase 2 complete_
 
 ## 1. Purpose of this document
 
@@ -27,9 +27,9 @@ The two surfaces share a single backend, a single data model, and mostly the sam
 
 - **Frontend:** React 18 + Vite + Leaflet, routed with `react-router-dom`. `/map` is the public map surface and `/research` is the settlement research browser.
 - **Map UI:** Marker clustering, layer toggles, custom-polygon province drawing with localStorage fallback, HTML-sanitised popups, search highlighting, base-map switching, and a bottom-left timeline slider.
-- **Research UI:** Settlement browser for towns, cities, and metropoleis with inline editing for name, summary, description HTML, coordinates, `validFrom`, and `validTo`.
+- **Research UI:** Settlement browser for towns, cities, and metropoleis with inline editing for name, summary, description HTML, coordinates, `validFrom`, `validTo`, and site-history events.
 - **Backend:** FastAPI + SQLAlchemy 2 + PostGIS 3.4 on Postgres 16 in Docker. Soft-delete on mutable tables. Alembic now has forward schema evolution: `0001_initial` and `0002_feature_validity_dates`.
-- **Temporal core:** `features.valid_from` and `features.valid_to` are first-class nullable date columns. `GET /api/features` accepts `at_date` and `date_range`; GeoJSON responses include `validFrom` and `validTo`.
+- **Temporal core:** `features.valid_from` and `features.valid_to` are first-class nullable date columns. `feature_events` stores ranged historical events for feature histories. `GET /api/features` accepts `at_date` and `date_range`; GeoJSON responses include `validFrom` and `validTo`.
 - **Ingestion:** Robust, idempotent KMZ importer (`server/app/importer.py`) plus a pre-build preprocessor (`scripts/preprocess-kmz.mjs`) that emits per-category GeoJSON to `public/atlas/` as a static fallback when the API is unavailable.
 - **Data loaded:** 6,992 features across 10 flat categories: episcopal, churches, metropoleis, cities, towns, farmsteads, fortresses, castles, bridges, roads-landmarks. There are 15 extracted icons and bounds covering the Mediterranean, Asia Minor, and Eastern Europe.
 - **Tests and CI:** Vitest utility tests, pytest backend/importer tests, and GitHub Actions CI.
@@ -45,7 +45,7 @@ The two surfaces share a single backend, a single data model, and mostly the sam
 
 ### What is not there yet
 
-- No event log or event-resolved site history.
+- No event-resolved current-state snapshots from event history yet.
 - No versioned borders / territories.
 - No two-level category hierarchy.
 - No polygon editing beyond draw/delete.
@@ -62,7 +62,7 @@ Every significant feature in the product spec - the time slider, conquest/loss, 
 The chosen shape remains a **hybrid temporal model**:
 
 1. **`Feature.valid_from` / `Feature.valid_to`: implemented in Phase 1.** These nullable date columns represent site existence: creation/foundation/first attestation and abandonment/loss/end of attestation. Nullable means unbounded. They are indexed and used by the map timeline.
-2. **`FeatureEvent`: planned for Phase 2.** A new table keyed by `feature_id`, `effective_date`, `event_type`, and `payload_json`. Event types should cover `name_change`, `conquest`, `loss`, `population`, `theo_political_status`, `thematic_admin`, and `notable_event`. Resolving a feature at date D folds events up to D into a current-state snapshot.
+2. **`FeatureEvent`: implemented in Phase 2.** The `feature_events` table is keyed by `feature_id`, `event_type`, `start_date`, optional `end_date`, and `payload_json`. Event types cover `name_change`, `conquest`, `loss`, `population`, `theo_political_status`, `thematic_admin`, and `notable_event`. Resolving a feature at date D by folding events into a current-state snapshot is still future work.
 3. **`TerritoryVersion`: planned for Phase 4.** Time-versioned polygons: `territory_id`, `kind`, `valid_from`, `valid_to`, `geometry`. `kind` should cover `imperial`, `thematic`, `neighbour_state`, and `diocese`.
 4. **Battles remain point-in-time.** A battle should become either a feature subtype with a single `event_date`, or a feature plus a corresponding event record. Decide this before Phase 3/4 taxonomy work.
 
@@ -113,13 +113,29 @@ Current Phase 1 behavior:
 - A feature is visible at date D when `(valid_from IS NULL OR valid_from <= D)` and `(valid_to IS NULL OR valid_to >= D)`.
 - `date_range=START,END` or `date_range=START..END` returns features whose validity interval overlaps the requested range.
 
-### Phase 2 - Event log & site history - NEXT
+### Phase 2 - Event log & site history - DONE
 
-- New table `feature_events`.
-- Migration should preserve existing feature dates and optionally backfill obvious event-like metadata if identifiable.
-- Popup "see more" expansion renders a timeline of events for the focused site.
-- Research workspace gains UI for adding/removing/editing events against a selected feature.
-- Decide event payload conventions before building UI. For example, `name_change` should probably carry `old_name`, `new_name`, and optional source fields; `conquest`/`loss` should carry polity/actor fields.
+Completed 2026-04-24. Verified with:
+- `.venv\Scripts\python -m pytest server\tests` - 13 passed
+- `npm run test` - 16 passed
+- `npm run build` - passed
+
+What changed:
+- `server/app/models.py` - added `FeatureEvent` with `feature_id`, `event_type`, `start_date`, optional `end_date`, `payload_json`, timestamps, and soft-delete.
+- `server/alembic/versions/0003_feature_events.py` - migration creates `feature_events` and indexes feature, event type, date range, and soft-delete columns.
+- `server/app/main.py` - added feature-scoped event CRUD endpoints under `/api/features/{feature_id}/events`, event type validation, event date range validation, and payload key validation.
+- `server/app/schemas.py` - added event create/update/response models.
+- `src/api.js` - added feature-event API helpers.
+- `src/components/map/FeaturePopup.jsx` - popups now load and render a site-history timeline for the selected feature.
+- `src/pages/ResearchPage.jsx` - settlement editor now includes a site-history event list plus add/edit/delete controls.
+- `server/tests/test_feature_events.py` - added focused tests for event type, range, and payload validation.
+
+Current Phase 2 behavior:
+- Events support date ranges through required `startDate` and optional `endDate`.
+- Events are soft-deleted rather than hard-deleted.
+- Event payloads remain JSON for flexibility, but are constrained to known fields per event type.
+- Source fields are stored inside `payload_json` for now: `source_title`, `source_url`, and `source_note`.
+- Feature visibility still uses `features.valid_from` / `features.valid_to`; events do not yet mutate or derive the map-visible feature state.
 
 ### Phase 3 - Taxonomy & layer types
 
@@ -171,6 +187,7 @@ Engineering should deliver each phase with importer tooling or admin UI that mak
 - **Scope of time.** Byzantine-only, roughly 330-1453, or a broader antiquity-to-early-modern range. Phase 1 currently uses 330-1453 as the slider range.
 - **Slider granularity.** Phase 1 uses year granularity and requests January 1 of the selected year. Some historical workflows may need month/day precision later, but year-level is probably right for the main map.
 - **Inclusive vs. exclusive end dates.** Phase 1 treats `valid_to` as inclusive for feature visibility. Territory versions may want exclusive end dates to avoid border overlap.
+- **Event-resolved feature snapshots.** Phase 2 stores history but does not yet fold events into a current-state view. Decide whether this resolution belongs in the API response, a separate endpoint, or a materialized/cache layer before using event-derived names/status/population in marker rendering.
 - **Provinces vs. territories.** Current `provinces` are user-drawn scratchpad polygons. Recommendation: keep them as annotations and build canonical temporal borders separately as `territory_versions`.
 - **Static-file fallback.** Decide whether to freeze static GeoJSON as "baseline/no-date view" or remove fallback once the temporal DB is mandatory.
 - **KMZ re-import vs. DB-as-source-of-truth.** Today re-running import can reload features. Once date/event editing is real content, importer behavior should become append/merge-only or be locked behind an explicit destructive flag.
@@ -178,13 +195,13 @@ Engineering should deliver each phase with importer tooling or admin UI that mak
 
 ## 8. Recommended next sprint
 
-The next engineering sprint should be **Phase 2: Event log & site history**.
+The next engineering sprint should be **Phase 3: Taxonomy & layer types**.
 
 Suggested scope:
-- Add `feature_events` migration and SQLAlchemy model.
-- Add API endpoints for listing, creating, updating, and soft-deleting events for a feature.
-- Add a focused event editor inside `/research` for one selected settlement.
-- Add popup "see more" history rendering for events.
-- Add tests around event validation and date ordering.
+- Add `Category.parent_id` migration and data migration for the existing 10 flat categories.
+- Build the two-level layer panel with heading toggles and per-subtype toggles.
+- Decide the product taxonomy placement for `episcopal`.
+- Add first-pass layer type CRUD, leaving icon upload for a follow-up if needed.
+- Start consuming event-resolved status/population only after the snapshot contract is decided.
 
-Defer full taxonomy, icon upload, borders, and auth until after the event model is stable. Those features depend on event-resolved feature state and would be more expensive to rework if event payloads change.
+Defer borders, auth, full structured citations, and battle modelling until taxonomy and event snapshot semantics are stable.

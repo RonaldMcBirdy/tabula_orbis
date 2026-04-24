@@ -56,6 +56,31 @@ class FeatureUpdate(BaseModel):
     geometry: dict[str, Any] | None = None
 
 
+class FeatureEventBase(BaseModel):
+    eventType: str
+    startDate: str
+    endDate: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class FeatureEventCreate(FeatureEventBase):
+    id: str | None = None
+
+
+class FeatureEventUpdate(BaseModel):
+    eventType: str | None = None
+    startDate: str | None = None
+    endDate: str | None = None
+    payload: dict[str, Any] | None = None
+
+
+class FeatureEventResponse(FeatureEventBase):
+    id: str
+    featureId: str
+    createdAt: str | None = None
+    updatedAt: str | None = None
+
+
 class ProvinceCreate(BaseModel):
     name: str
     description: str = ""

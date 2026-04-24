@@ -2,7 +2,7 @@ from datetime import date, datetime
 from uuid import uuid4
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.db import Base
@@ -78,6 +78,28 @@ class Feature(Base):
         cascade="all, delete-orphan",
         lazy="selectin",
     )
+    events: Mapped[list["FeatureEvent"]] = relationship(
+        back_populates="feature",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="FeatureEvent.start_date",
+    )
+
+
+class FeatureEvent(Base):
+    __tablename__ = "feature_events"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True, default=uuid_string)
+    feature_id: Mapped[str] = mapped_column(ForeignKey("features.id", ondelete="CASCADE"), nullable=False, index=True)
+    event_type: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    end_date: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    payload_json: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    feature: Mapped[Feature] = relationship(back_populates="events")
 
 
 class FeatureMetadata(Base):

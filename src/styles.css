@@ -537,6 +537,51 @@ textarea {
   color: var(--accent-strong);
 }
 
+.popup-history {
+  margin: 0 0 0.85rem;
+  border-bottom: 1px solid rgba(127, 63, 32, 0.16);
+  padding-bottom: 0.75rem;
+}
+
+.popup-history h4 {
+  margin: 0 0 0.45rem;
+  color: var(--accent-strong);
+  font-size: 0.84rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.popup-history p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.popup-history ol {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding-left: 1.15rem;
+}
+
+.popup-history li {
+  color: var(--muted);
+}
+
+.popup-history time,
+.popup-history strong,
+.popup-history span {
+  display: block;
+}
+
+.popup-history time {
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.78rem;
+}
+
+.popup-history strong {
+  color: var(--ink);
+}
+
 .province-popup p {
   margin: 0;
   color: var(--muted);
@@ -963,6 +1008,89 @@ textarea {
   flex-wrap: wrap;
 }
 
+.db-events-panel {
+  border: 1px solid rgba(127, 63, 32, 0.22);
+  border-radius: 12px;
+  padding: 1rem;
+  background: rgba(255, 251, 243, 0.62);
+}
+
+.db-events-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.db-events-header h2 {
+  margin: 0;
+  color: var(--accent-strong);
+  font-size: 0.95rem;
+}
+
+.db-events-header span,
+.db-event-error {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.db-event-error {
+  margin: 0 0 0.75rem;
+  color: #8b2020;
+}
+
+.db-event-list {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.db-event-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.75rem;
+  align-items: center;
+  border: 1px solid rgba(127, 63, 32, 0.16);
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+  background: rgba(255, 251, 243, 0.76);
+}
+
+.db-event-row time,
+.db-event-row strong,
+.db-event-row span {
+  display: block;
+}
+
+.db-event-row time {
+  color: var(--muted);
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.78rem;
+}
+
+.db-event-row strong {
+  color: var(--ink);
+  font-size: 0.9rem;
+}
+
+.db-event-row span {
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.db-event-actions,
+.db-event-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.db-event-form {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.85rem 1rem;
+}
+
 /* ─── Buttons ─── */
 .db-btn {
   border: 1px solid rgba(127, 63, 32, 0.28);
@@ -1013,6 +1141,11 @@ textarea {
   font-size: 0.8rem;
 }
 
+.db-btn--danger {
+  border-color: rgba(122, 37, 32, 0.28);
+  color: #7a2520;
+}
+
 /* ─── Pagination ─── */
 .db-pagination {
   display: flex;
@@ -1035,6 +1168,11 @@ textarea {
   }
 
   .db-edit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .db-event-form,
+  .db-event-row {
     grid-template-columns: 1fr;
   }
 

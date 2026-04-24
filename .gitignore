@@ -11,6 +11,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 .pytest_cache/
+server/app/__pycache__/
 
 # Local database files
 *.db
