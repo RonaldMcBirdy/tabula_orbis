@@ -1,0 +1,27 @@
+{
+  "name": "tabula-orbis-kmz-viewer",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/preprocess-kmz.mjs && vite",
+    "build": "node scripts/preprocess-kmz.mjs && vite build",
+    "preprocess:kmz": "node scripts/preprocess-kmz.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.5.3",
+    "jszip": "^3.10.1",
+    "leaflet": "^1.9.4",
+    "leaflet.markercluster": "^1.5.3",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
+    "react-leaflet-cluster": "^3.1.1",
+    "sanitize-html": "^2.13.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "vite": "^5.4.11"
+  }
+}
