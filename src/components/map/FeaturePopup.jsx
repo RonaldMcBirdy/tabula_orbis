@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Popup } from "react-leaflet";
-import { fetchFeatureEvents } from "../../api.js";
+import { fetchFeatureEvents, fetchFeatureSnapshot } from "../../api.js";
 import { highlightHtml } from "../../utils/html.js";
 
 const EVENT_LABELS = {
@@ -28,7 +28,22 @@ function eventTitle(event) {
   return payload.title || payload.status || payload.theme || payload.actor || payload.polity || payload.note || "";
 }
 
-export function buildPopupContent(properties, searchQuery = "", events = [], eventsState = "idle") {
+function snapshotEntries(snapshot) {
+  if (!snapshot) {
+    return [];
+  }
+
+  return [
+    snapshot.population?.value
+      ? ["Population", `${snapshot.population.value}${snapshot.population.unit ? ` ${snapshot.population.unit}` : ""}`]
+      : null,
+    snapshot.theoPoliticalStatus ? ["Status", snapshot.theoPoliticalStatus] : null,
+    snapshot.thematicAdmin?.theme ? ["Theme", snapshot.thematicAdmin.theme] : null,
+    snapshot.politicalState?.toPolity ? ["Polity", snapshot.politicalState.toPolity] : null,
+  ].filter(Boolean);
+}
+
+export function buildPopupContent(properties, searchQuery = "", events = [], eventsState = "idle", snapshot = null, snapshotState = "idle") {
   const html = highlightHtml(properties.descriptionHtml, searchQuery);
   const temporalEntries = [
     properties.validFrom ? ["Valid from", properties.validFrom] : null,
@@ -37,11 +52,13 @@ export function buildPopupContent(properties, searchQuery = "", events = [], eve
   const metadataEntries = Object.entries(properties.metadata ?? {}).filter(
     ([key, value]) => value && key.toLowerCase() !== "summary",
   );
-  const detailEntries = [...temporalEntries, ...metadataEntries];
+  const detailEntries = [...snapshotEntries(snapshot), ...temporalEntries, ...metadataEntries];
+  const displayName = snapshot?.name || properties.name || "Untitled feature";
 
   return (
     <div className="popup-card">
-      <h3>{properties.name || "Untitled feature"}</h3>
+      <h3>{displayName}</h3>
+      {snapshotState === "error" ? <p className="popup-state-note">Date-resolved state could not be loaded.</p> : null}
       {detailEntries.length > 0 ? (
         <dl className="popup-meta">
           {detailEntries.map(([key, value]) => (
@@ -76,9 +93,11 @@ export function buildPopupContent(properties, searchQuery = "", events = [], eve
   );
 }
 
-export default function FeaturePopup({ feature, searchQuery }) {
+export default function FeaturePopup({ feature, searchQuery, atDate }) {
   const [events, setEvents] = useState([]);
   const [eventsState, setEventsState] = useState("loading");
+  const [snapshot, setSnapshot] = useState(feature.properties.snapshot ?? null);
+  const [snapshotState, setSnapshotState] = useState(feature.properties.snapshot ? "ready" : "idle");
 
   useEffect(() => {
     let cancelled = false;
@@ -101,5 +120,46 @@ export default function FeaturePopup({ feature, searchQuery }) {
     };
   }, [feature.id]);
 
-  return <Popup maxWidth={380}>{buildPopupContent(feature.properties, searchQuery, events, eventsState)}</Popup>;
+  useEffect(() => {
+    let cancelled = false;
+    if (!atDate) {
+      setSnapshot(feature.properties.snapshot ?? null);
+      setSnapshotState(feature.properties.snapshot ? "ready" : "idle");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (feature.properties.snapshot?.atDate === atDate) {
+      setSnapshot(feature.properties.snapshot);
+      setSnapshotState("ready");
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setSnapshotState("loading");
+    fetchFeatureSnapshot(feature.id, atDate)
+      .then((item) => {
+        if (!cancelled) {
+          setSnapshot(item);
+          setSnapshotState("ready");
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSnapshot(feature.properties.snapshot ?? null);
+          setSnapshotState("error");
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [atDate, feature.id, feature.properties.snapshot]);
+
+  return (
+    <Popup maxWidth={380}>
+      {buildPopupContent(feature.properties, searchQuery, events, eventsState, snapshot, snapshotState)}
+    </Popup>
+  );
 }

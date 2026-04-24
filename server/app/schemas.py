@@ -14,6 +14,27 @@ class CategoryResponse(BaseModel):
     featureCount: int
     defaultVisible: bool
     legendIcon: str | None = None
+    parentId: str | None = None
+    parentLabel: str | None = None
+    displayOrder: int = 0
+    isGroup: bool = False
+
+
+class CategoryCreate(BaseModel):
+    id: str | None = None
+    label: str
+    parentId: str | None = None
+    defaultVisible: bool = True
+    displayOrder: int = 999
+    legendIcon: str | None = None
+
+
+class CategoryUpdate(BaseModel):
+    label: str | None = None
+    parentId: str | None = None
+    defaultVisible: bool | None = None
+    displayOrder: int | None = None
+    legendIcon: str | None = None
 
 
 class ManifestResponse(BaseModel):
@@ -79,6 +100,18 @@ class FeatureEventResponse(FeatureEventBase):
     featureId: str
     createdAt: str | None = None
     updatedAt: str | None = None
+
+
+class FeatureSnapshotResponse(BaseModel):
+    featureId: str
+    atDate: str
+    name: str
+    population: dict[str, Any] | None = None
+    theoPoliticalStatus: str | None = None
+    thematicAdmin: dict[str, Any] | None = None
+    politicalState: dict[str, Any] | None = None
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    appliedEvents: list[FeatureEventResponse] = Field(default_factory=list)
 
 
 class ProvinceCreate(BaseModel):

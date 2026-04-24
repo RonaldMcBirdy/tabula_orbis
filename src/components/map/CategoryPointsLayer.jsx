@@ -1,11 +1,15 @@
 import { useMemo } from "react";
-import { Marker } from "react-leaflet";
+import { Marker, Tooltip } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import { featureMatchesSearch } from "../../utils/geo.js";
 import { createLeafletIcon } from "../../utils/icons.js";
 import FeaturePopup from "./FeaturePopup.jsx";
 
-export default function CategoryPointsLayer({ featureCollection, category, iconsByStyle, searchQuery }) {
+function resolvedFeatureName(feature) {
+  return feature.properties?.snapshot?.name || feature.properties?.name || "Untitled feature";
+}
+
+export default function CategoryPointsLayer({ featureCollection, category, iconsByStyle, searchQuery, atDate }) {
   const pointFeatures = useMemo(
     () => featureCollection.features.filter((feature) => feature.geometry?.type === "Point"),
     [featureCollection],
@@ -30,7 +34,12 @@ export default function CategoryPointsLayer({ featureCollection, category, icons
             position={[latitude, longitude]}
             icon={icon ?? undefined}
           >
-            <FeaturePopup feature={feature} searchQuery={searchQuery} />
+            {atDate ? (
+              <Tooltip permanent direction="right" offset={[10, -12]} className="feature-label-tooltip">
+                {resolvedFeatureName(feature)}
+              </Tooltip>
+            ) : null}
+            <FeaturePopup feature={feature} searchQuery={searchQuery} atDate={atDate} />
           </Marker>
         );
       })}

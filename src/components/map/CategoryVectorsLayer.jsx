@@ -17,7 +17,7 @@ function styleFeature(feature, category, index, searchQuery = "") {
   };
 }
 
-export default function CategoryVectorsLayer({ featureCollection, category, searchQuery }) {
+export default function CategoryVectorsLayer({ featureCollection, category, searchQuery, atDate }) {
   const vectorFeatures = useMemo(
     () => ({
       ...featureCollection,
@@ -28,13 +28,20 @@ export default function CategoryVectorsLayer({ featureCollection, category, sear
 
   return (
     <GeoJSON
-      key={`${category.id}-${searchQuery}`}
+      key={`${category.id}-${searchQuery}-${atDate ?? "all"}`}
       data={vectorFeatures}
       style={(feature) => styleFeature(feature, category, 0, searchQuery)}
       onEachFeature={(feature, layer) => {
-        layer.bindPopup(renderToStaticMarkup(buildPopupContent(feature.properties, searchQuery)), {
+        layer.bindPopup(renderToStaticMarkup(buildPopupContent(feature.properties, searchQuery, [], "idle", feature.properties.snapshot ?? null)), {
           maxWidth: 380,
         });
+        if (atDate && feature.properties.snapshot?.name) {
+          layer.bindTooltip(feature.properties.snapshot.name, {
+            permanent: true,
+            direction: "center",
+            className: "feature-label-tooltip vector",
+          });
+        }
       }}
     />
   );

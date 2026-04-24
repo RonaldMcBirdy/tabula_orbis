@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  createCategory,
   createFeatureEvent,
+  deleteCategory,
   deleteFeatureEvent,
+  fetchCategories,
   fetchFeatureEvents,
   fetchFeatures,
+  updateCategory,
   updateFeature,
   updateFeatureEvent,
 } from "../api.js";
@@ -42,6 +46,14 @@ const EMPTY_EVENT_DRAFT = {
   startDate: "",
   endDate: "",
   payloadText: "{\n  \"title\": \"\"\n}",
+};
+
+const EMPTY_LAYER_DRAFT = {
+  id: "",
+  label: "",
+  parentId: "settlements",
+  defaultVisible: true,
+  displayOrder: 999,
 };
 
 function formatEventRange(event) {
@@ -88,6 +100,12 @@ export default function ResearchPage() {
   const [eventDraft, setEventDraft] = useState(EMPTY_EVENT_DRAFT);
   const [eventError, setEventError] = useState("");
   const [editedIds, setEditedIds] = useState(() => new Set());
+  const [layerTypes, setLayerTypes] = useState([]);
+  const [layerState, setLayerState] = useState("loading");
+  const [layerError, setLayerError] = useState("");
+  const [layerDraft, setLayerDraft] = useState(EMPTY_LAYER_DRAFT);
+  const [editingLayerId, setEditingLayerId] = useState(null);
+  const [layerEdit, setLayerEdit] = useState({});
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +141,32 @@ export default function ResearchPage() {
     }
 
     loadSettlements();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLayerTypes() {
+      setLayerState("loading");
+      setLayerError("");
+      try {
+        const categories = await fetchCategories({ include_groups: true });
+        if (!cancelled) {
+          setLayerTypes(categories);
+          setLayerState("ready");
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setLayerError(error.message || "Layer types could not be loaded.");
+          setLayerState("error");
+        }
+      }
+    }
+
+    loadLayerTypes();
     return () => {
       cancelled = true;
     };
@@ -291,6 +335,70 @@ export default function ResearchPage() {
   }
 
   const editedCount = editedIds.size;
+  const parentLayerTypes = useMemo(
+    () => layerTypes.filter((category) => category.isGroup || !category.parentId),
+    [layerTypes],
+  );
+  const editableLayerTypes = useMemo(
+    () => layerTypes.filter((category) => !category.isGroup),
+    [layerTypes],
+  );
+
+  async function createLayerType() {
+    setLayerError("");
+    try {
+      const created = await createCategory({
+        ...layerDraft,
+        id: layerDraft.id.trim() || null,
+        label: layerDraft.label.trim(),
+        parentId: layerDraft.parentId || null,
+        displayOrder: Number(layerDraft.displayOrder) || 999,
+      });
+      setLayerTypes((current) => [...current, created].sort((a, b) => a.displayOrder - b.displayOrder || a.label.localeCompare(b.label)));
+      setLayerDraft(EMPTY_LAYER_DRAFT);
+    } catch (error) {
+      setLayerError(error.message || "Layer type could not be created.");
+    }
+  }
+
+  function startLayerEdit(category) {
+    setEditingLayerId(category.id);
+    setLayerEdit({
+      label: category.label,
+      parentId: category.parentId ?? "",
+      defaultVisible: category.defaultVisible,
+      displayOrder: category.displayOrder,
+    });
+  }
+
+  async function saveLayerEdit(category) {
+    setLayerError("");
+    try {
+      const updated = await updateCategory(category.id, {
+        label: layerEdit.label,
+        parentId: layerEdit.parentId || null,
+        defaultVisible: layerEdit.defaultVisible,
+        displayOrder: Number(layerEdit.displayOrder) || category.displayOrder,
+      });
+      setLayerTypes((current) =>
+        current.map((item) => (item.id === updated.id ? updated : item)).sort((a, b) => a.displayOrder - b.displayOrder || a.label.localeCompare(b.label)),
+      );
+      setEditingLayerId(null);
+      setLayerEdit({});
+    } catch (error) {
+      setLayerError(error.message || "Layer type could not be updated.");
+    }
+  }
+
+  async function removeLayerType(category) {
+    setLayerError("");
+    try {
+      await deleteCategory(category.id);
+      setLayerTypes((current) => current.filter((item) => item.id !== category.id));
+    } catch (error) {
+      setLayerError(error.message || "Only empty layer types with no children can be deleted.");
+    }
+  }
 
   return (
     <div className="db-page">
@@ -330,6 +438,130 @@ export default function ResearchPage() {
           />
         </div>
       </div>
+
+      <section className="db-layer-panel">
+        <div className="db-events-header">
+          <h2>Layer Types</h2>
+          <span>{layerState === "ready" ? `${editableLayerTypes.length} editable` : layerState}</span>
+        </div>
+        {layerError && <p className="db-event-error">{layerError}</p>}
+        <div className="db-layer-create">
+          <input
+            className="db-input"
+            type="text"
+            placeholder="Slug, optional"
+            value={layerDraft.id}
+            onChange={(event) => setLayerDraft((draft) => ({ ...draft, id: event.target.value }))}
+          />
+          <input
+            className="db-input"
+            type="text"
+            placeholder="Layer label"
+            value={layerDraft.label}
+            onChange={(event) => setLayerDraft((draft) => ({ ...draft, label: event.target.value }))}
+          />
+          <select
+            className="db-input"
+            value={layerDraft.parentId}
+            onChange={(event) => setLayerDraft((draft) => ({ ...draft, parentId: event.target.value }))}
+          >
+            <option value="">No parent</option>
+            {parentLayerTypes.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.label}
+              </option>
+            ))}
+          </select>
+          <label className="db-check">
+            <input
+              type="checkbox"
+              checked={layerDraft.defaultVisible}
+              onChange={(event) => setLayerDraft((draft) => ({ ...draft, defaultVisible: event.target.checked }))}
+            />
+            Default
+          </label>
+          <button
+            type="button"
+            className="db-btn db-btn--save"
+            disabled={!layerDraft.label.trim()}
+            onClick={createLayerType}
+          >
+            Add Layer
+          </button>
+        </div>
+        {layerState === "ready" && (
+          <div className="db-layer-list">
+            {editableLayerTypes.map((category) => {
+              const isEditingLayer = editingLayerId === category.id;
+              return (
+                <div className="db-layer-row" key={category.id}>
+                  {isEditingLayer ? (
+                    <>
+                      <input
+                        className="db-input"
+                        value={layerEdit.label}
+                        onChange={(event) => setLayerEdit((edit) => ({ ...edit, label: event.target.value }))}
+                      />
+                      <select
+                        className="db-input"
+                        value={layerEdit.parentId}
+                        onChange={(event) => setLayerEdit((edit) => ({ ...edit, parentId: event.target.value }))}
+                      >
+                        <option value="">No parent</option>
+                        {parentLayerTypes.map((parent) => (
+                          <option key={parent.id} value={parent.id}>
+                            {parent.label}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        className="db-input"
+                        type="number"
+                        value={layerEdit.displayOrder}
+                        onChange={(event) => setLayerEdit((edit) => ({ ...edit, displayOrder: event.target.value }))}
+                      />
+                      <label className="db-check">
+                        <input
+                          type="checkbox"
+                          checked={layerEdit.defaultVisible}
+                          onChange={(event) => setLayerEdit((edit) => ({ ...edit, defaultVisible: event.target.checked }))}
+                        />
+                        Default
+                      </label>
+                      <div className="db-layer-actions">
+                        <button type="button" className="db-btn db-btn--save" onClick={() => saveLayerEdit(category)}>
+                          Save
+                        </button>
+                        <button type="button" className="db-btn db-btn--cancel" onClick={() => setEditingLayerId(null)}>
+                          Cancel
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div>
+                        <strong>{category.label}</strong>
+                        <small>
+                          {category.id} - {category.parentLabel ?? "No parent"} - {category.featureCount} features
+                        </small>
+                      </div>
+                      <span>{category.defaultVisible ? "Default on" : "Default off"}</span>
+                      <div className="db-layer-actions">
+                        <button type="button" className="db-btn" onClick={() => startLayerEdit(category)}>
+                          Edit
+                        </button>
+                        <button type="button" className="db-btn db-btn--danger" onClick={() => removeLayerType(category)}>
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
 
       {loadingState === "loading" && <div className="db-state">Loading settlement data...</div>}
       {loadingState === "error" && (

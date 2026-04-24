@@ -41,9 +41,13 @@ export function provinceCenter(coordinates) {
 export function featureSearchText(feature) {
   const properties = feature.properties ?? {};
   return [
+    properties.snapshot?.name,
     properties.name,
     properties.category,
     properties.descriptionHtml,
+    properties.snapshot?.theoPoliticalStatus,
+    properties.snapshot?.thematicAdmin?.theme,
+    properties.snapshot?.politicalState?.toPolity,
     ...Object.values(properties.metadata ?? {}),
   ]
     .filter(Boolean)

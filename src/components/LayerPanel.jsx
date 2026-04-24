@@ -5,6 +5,7 @@ export default function LayerPanel({
   activeCategories,
   loadedCategories,
   onToggleCategory,
+  onToggleCategoryGroup,
   onShowAll,
   onHideAll,
   iconsByStyle,
@@ -29,6 +30,19 @@ export default function LayerPanel({
 }) {
   const canSaveProvince = provinceForm.name.trim() && draftProvincePoints.length >= 3;
   const selectedProvince = customProvinces.find((province) => province.id === selectedProvinceId);
+  const categoryGroups = Array.from(
+    categories.reduce((groups, category) => {
+      const groupId = category.parentId ?? "__ungrouped";
+      const group = groups.get(groupId) ?? {
+        id: groupId,
+        label: category.parentLabel ?? "Other Layers",
+        categories: [],
+      };
+      group.categories.push(category);
+      groups.set(groupId, group);
+      return groups;
+    }, new Map()).values(),
+  );
 
   return (
     <aside className="sidebar">
@@ -148,23 +162,48 @@ export default function LayerPanel({
         <section className="panel-section">
           <h2>Layers</h2>
           <div className="layer-list">
-            {categories.map((category) => {
-              const checked = activeCategories[category.id] ?? false;
-              const status = loadedCategories[category.id] ? "Loaded" : "On demand";
+            {categoryGroups.map((group) => {
+              const checkedCount = group.categories.filter((category) => activeCategories[category.id]).length;
+              const allChecked = checkedCount === group.categories.length;
+              const someChecked = checkedCount > 0 && !allChecked;
               return (
-                <label key={category.id} className="layer-row">
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => onToggleCategory(category.id)}
-                  />
-                  <span className="layer-label">
-                    <strong>{category.label}</strong>
-                    <small>
-                      {category.featureCount} features · {status}
-                    </small>
-                  </span>
-                </label>
+                <div key={group.id} className="layer-group">
+                  <label className="layer-group-row">
+                    <input
+                      type="checkbox"
+                      checked={allChecked}
+                      data-mixed={someChecked ? "true" : "false"}
+                      onChange={() => onToggleCategoryGroup(group.categories, !allChecked)}
+                    />
+                    <span>
+                      <strong>{group.label}</strong>
+                      <small>
+                        {checkedCount} / {group.categories.length} visible
+                      </small>
+                    </span>
+                  </label>
+                  <div className="layer-group-children">
+                    {group.categories.map((category) => {
+                      const checked = activeCategories[category.id] ?? false;
+                      const status = loadedCategories[category.id] ? "Loaded" : "On demand";
+                      return (
+                        <label key={category.id} className="layer-row">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() => onToggleCategory(category.id)}
+                          />
+                          <span className="layer-label">
+                            <strong>{category.label}</strong>
+                            <small>
+                              {category.featureCount} features &middot; {status}
+                            </small>
+                          </span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
               );
             })}
           </div>

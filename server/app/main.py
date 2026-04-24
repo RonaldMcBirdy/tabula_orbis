@@ -19,12 +19,15 @@ from server.app.geojson import (
 from server.app.importer import clean_html, import_kmz, slugify
 from server.app.models import AtlasSource, Category, Feature, FeatureEvent, FeatureMetadata, Province, Style
 from server.app.schemas import (
+    CategoryCreate,
     CategoryResponse,
+    CategoryUpdate,
     FeatureCreate,
     FeatureEventCreate,
     FeatureEventResponse,
     FeatureEventUpdate,
     FeaturePayload,
+    FeatureSnapshotResponse,
     FeatureUpdate,
     HealthResponse,
     ManifestResponse,
@@ -117,9 +120,82 @@ def metadata_dict(feature: Feature) -> dict[str, str]:
     return {entry.key: entry.value for entry in feature.metadata_entries}
 
 
-def feature_to_geojson(session: Session, feature: Feature) -> dict[str, Any]:
+def event_applies_at(event: FeatureEvent, at_date: date) -> bool:
+    return event.start_date <= at_date and (event.end_date is None or event.end_date >= at_date)
+
+
+def event_resolution_key(event: FeatureEvent) -> tuple[date, datetime, str]:
+    # Explicit Phase 3.5 conflict rule: latest start date wins, then latest edit, then stable id.
+    return (event.start_date, event.updated_at or event.created_at or datetime.min.replace(tzinfo=timezone.utc), event.id)
+
+
+def latest_event(events: list[FeatureEvent], event_type: str, at_date: date) -> FeatureEvent | None:
+    candidates = [event for event in events if event.event_type == event_type and event.deleted_at is None and event_applies_at(event, at_date)]
+    if not candidates:
+        return None
+    return max(candidates, key=event_resolution_key)
+
+
+def source_from_event(event: FeatureEvent) -> dict[str, Any] | None:
+    payload = event.payload_json or {}
+    source = {
+        "eventId": event.id,
+        "eventType": event.event_type,
+        "title": payload.get("source_title"),
+        "url": payload.get("source_url"),
+        "note": payload.get("source_note") or payload.get("note"),
+    }
+    if not any(source.get(key) for key in ("title", "url", "note")):
+        return None
+    return source
+
+
+def resolve_feature_snapshot(feature: Feature, events: list[FeatureEvent], at_date: date) -> FeatureSnapshotResponse:
+    name_event = latest_event(events, "name_change", at_date)
+    population_event = latest_event(events, "population", at_date)
+    status_event = latest_event(events, "theo_political_status", at_date)
+    admin_event = latest_event(events, "thematic_admin", at_date)
+    political_event = max(
+        (
+            event
+            for event in events
+            if event.event_type in {"conquest", "loss"}
+            and event.deleted_at is None
+            and event_applies_at(event, at_date)
+        ),
+        key=event_resolution_key,
+        default=None,
+    )
+
+    applied_events = [event for event in [name_event, population_event, status_event, admin_event, political_event] if event]
+    sources = [source for source in (source_from_event(event) for event in applied_events) if source]
+
+    return FeatureSnapshotResponse(
+        featureId=feature.id,
+        atDate=at_date.isoformat(),
+        name=(name_event.payload_json.get("new_name") if name_event else None) or feature.name,
+        population=population_event.payload_json if population_event else None,
+        theoPoliticalStatus=(status_event.payload_json.get("status") if status_event else None),
+        thematicAdmin=admin_event.payload_json if admin_event else None,
+        politicalState=(
+            {
+                "eventType": political_event.event_type,
+                "fromPolity": political_event.payload_json.get("from_polity"),
+                "toPolity": political_event.payload_json.get("to_polity") or political_event.payload_json.get("polity"),
+                "actor": political_event.payload_json.get("actor"),
+            }
+            if political_event
+            else None
+        ),
+        sources=sources,
+        appliedEvents=[event_to_response(event) for event in applied_events],
+    )
+
+
+def feature_to_geojson(session: Session, feature: Feature, at_date: date | None = None, include_snapshot: bool = False) -> dict[str, Any]:
+    snapshot = resolve_feature_snapshot(feature, feature.events, at_date) if include_snapshot and at_date else None
     style_key = feature.style.style_key if feature.style else None
-    return {
+    payload = {
         "type": "Feature",
         "id": feature.id,
         "geometry": geometry_to_geojson(session, feature.geometry),
@@ -136,6 +212,9 @@ def feature_to_geojson(session: Session, feature: Feature) -> dict[str, Any]:
             "fillColor": feature.style.fill_color if feature.style else None,
         },
     }
+    if snapshot:
+        payload["properties"]["snapshot"] = snapshot.model_dump()
+    return payload
 
 
 def event_to_response(event: FeatureEvent) -> FeatureEventResponse:
@@ -182,6 +261,42 @@ def get_category(session: Session, slug_or_label: str) -> Category:
     return category
 
 
+def get_existing_category(session: Session, slug_or_label: str) -> Category:
+    slug = slugify(slug_or_label)
+    category = session.scalar(select(Category).where(or_(Category.slug == slug, Category.label == slug_or_label)))
+    if category is None:
+        raise HTTPException(status_code=404, detail="Category not found")
+    return category
+
+
+def category_to_response(category: Category, feature_count: int) -> CategoryResponse:
+    return CategoryResponse(
+        id=category.slug,
+        label=category.label,
+        dataFile=f"/api/features?category={category.slug}",
+        featureCount=feature_count,
+        defaultVisible=category.default_visible,
+        legendIcon=category.legend_style_key,
+        parentId=category.parent.slug if category.parent else None,
+        parentLabel=category.parent.label if category.parent else None,
+        displayOrder=category.display_order,
+        isGroup=bool(category.children),
+    )
+
+
+def apply_category_payload(session: Session, category: Category, payload: CategoryCreate | CategoryUpdate) -> None:
+    if payload.label is not None:
+        category.label = payload.label.strip() or "Untitled Layer"
+    if "parentId" in payload.model_fields_set:
+        category.parent = get_existing_category(session, payload.parentId) if payload.parentId else None
+    if payload.defaultVisible is not None:
+        category.default_visible = payload.defaultVisible
+    if payload.displayOrder is not None:
+        category.display_order = payload.displayOrder
+    if "legendIcon" in payload.model_fields_set:
+        category.legend_style_key = payload.legendIcon or None
+
+
 def get_style(session: Session, style_key: str | None) -> Style | None:
     if not style_key:
         return None
@@ -220,24 +335,59 @@ def health() -> HealthResponse:
 
 
 @app.get("/api/categories", response_model=list[CategoryResponse])
-def list_categories(session: Session = Depends(get_session)) -> list[CategoryResponse]:
+def list_categories(
+    include_groups: bool = False,
+    session: Session = Depends(get_session),
+) -> list[CategoryResponse]:
     rows = session.execute(
         select(Category, func.count(Feature.id))
         .outerjoin(Feature, (Feature.category_id == Category.id) & (Feature.deleted_at.is_(None)))
+        .options(selectinload(Category.parent), selectinload(Category.children))
         .group_by(Category.id)
         .order_by(Category.display_order, Category.label)
     ).all()
-    return [
-        CategoryResponse(
-            id=category.slug,
-            label=category.label,
-            dataFile=f"/api/features?category={category.slug}",
-            featureCount=count,
-            defaultVisible=category.default_visible,
-            legendIcon=category.legend_style_key,
-        )
-        for category, count in rows
-    ]
+    categories = [category_to_response(category, count) for category, count in rows]
+    if include_groups:
+        return categories
+    return [category for category in categories if not category.isGroup]
+
+
+@app.post("/api/categories", response_model=CategoryResponse)
+def create_category(payload: CategoryCreate, session: Session = Depends(get_session)) -> CategoryResponse:
+    slug = slugify(payload.id or payload.label)
+    existing = session.scalar(select(Category).where(Category.slug == slug))
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="Category already exists")
+    category = Category(slug=slug, label=payload.label.strip() or "Untitled Layer")
+    session.add(category)
+    apply_category_payload(session, category, payload)
+    session.commit()
+    session.refresh(category)
+    return category_to_response(category, 0)
+
+
+@app.patch("/api/categories/{category_id}", response_model=CategoryResponse)
+def update_category(category_id: str, payload: CategoryUpdate, session: Session = Depends(get_session)) -> CategoryResponse:
+    category = get_existing_category(session, category_id)
+    if "parentId" in payload.model_fields_set and payload.parentId and slugify(payload.parentId) == category.slug:
+        raise HTTPException(status_code=400, detail="A category cannot be its own parent")
+    apply_category_payload(session, category, payload)
+    session.commit()
+    session.refresh(category)
+    count = session.scalar(select(func.count(Feature.id)).where(Feature.category_id == category.id, Feature.deleted_at.is_(None))) or 0
+    return category_to_response(category, count)
+
+
+@app.delete("/api/categories/{category_id}")
+def delete_category(category_id: str, session: Session = Depends(get_session)) -> dict[str, bool]:
+    category = get_existing_category(session, category_id)
+    feature_count = session.scalar(select(func.count(Feature.id)).where(Feature.category_id == category.id, Feature.deleted_at.is_(None))) or 0
+    child_count = session.scalar(select(func.count(Category.id)).where(Category.parent_id == category.id)) or 0
+    if feature_count or child_count:
+        raise HTTPException(status_code=409, detail="Only empty layer types with no children can be deleted")
+    session.delete(category)
+    session.commit()
+    return {"deleted": True}
 
 
 @app.get("/api/manifest", response_model=ManifestResponse)
@@ -286,6 +436,7 @@ def list_features(
     geometry_type: str | None = None,
     at_date: date | None = None,
     date_range: str | None = None,
+    include_snapshot: bool = False,
     limit: int = Query(5000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
@@ -318,7 +469,7 @@ def list_features(
     features = session.scalars(query).unique().all()
     return {
         "type": "FeatureCollection",
-        "features": [feature_to_geojson(session, feature) for feature in features],
+        "features": [feature_to_geojson(session, feature, at_date=at_date, include_snapshot=include_snapshot) for feature in features],
     }
 
 
@@ -332,6 +483,22 @@ def get_feature(feature_id: str, session: Session = Depends(get_session)) -> dic
     if feature is None:
         raise HTTPException(status_code=404, detail="Feature not found")
     return feature_to_geojson(session, feature)
+
+
+@app.get("/api/features/{feature_id}/snapshot", response_model=FeatureSnapshotResponse)
+def get_feature_snapshot(
+    feature_id: str,
+    at_date: date = Query(...),
+    session: Session = Depends(get_session),
+) -> FeatureSnapshotResponse:
+    feature = session.scalar(
+        select(Feature)
+        .options(selectinload(Feature.events))
+        .where(Feature.id == feature_id, Feature.deleted_at.is_(None))
+    )
+    if feature is None:
+        raise HTTPException(status_code=404, detail="Feature not found")
+    return resolve_feature_snapshot(feature, feature.events, at_date)
 
 
 @app.post("/api/features", response_model=FeaturePayload)

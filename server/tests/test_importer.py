@@ -1,4 +1,4 @@
-from server.app.importer import collect_description_metadata, parse_color, slugify, strip_coordinates
+from server.app.importer import CATEGORY_LABEL_OVERRIDES, CATEGORY_PARENT_MAPPING, collect_description_metadata, parse_color, slugify, strip_coordinates
 
 
 def test_slugify_matches_frontend_asset_ids():
@@ -17,3 +17,8 @@ def test_parse_kml_color_to_css_hex():
 def test_collect_description_metadata_uses_first_three_lines():
     metadata = collect_description_metadata("<p>One</p>\n<p>Two</p>\n<p>Three</p>\n<p>Four</p>")
     assert metadata == {"Summary": "One | Two | Three"}
+
+
+def test_taxonomy_maps_episcopal_to_ecclesiastical_layer():
+    assert CATEGORY_PARENT_MAPPING["episcopal"][:2] == ("ecclesiastical", "Ecclesiastical")
+    assert CATEGORY_LABEL_OVERRIDES["episcopal"] == "Episcopal Sees"

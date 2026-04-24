@@ -128,6 +128,7 @@ export default function MapPage() {
               category: category.id,
               limit: 10000,
               at_date: timelineDate,
+              include_snapshot: Boolean(timelineDate),
             });
             return [categoryId, featureCollection];
           } catch {
@@ -296,6 +297,12 @@ export default function MapPage() {
             [categoryId]: !current[categoryId],
           }));
         }}
+        onToggleCategoryGroup={(categories, checked) => {
+          setActiveCategories((current) => ({
+            ...current,
+            ...Object.fromEntries(categories.map((category) => [category.id, checked])),
+          }));
+        }}
         onShowAll={() => {
           setActiveCategories(
             Object.fromEntries(manifest.categories.map((category) => [category.id, true])),
@@ -394,6 +401,7 @@ export default function MapPage() {
                     featureCollection={featureCollection}
                     iconsByStyle={iconsByStyle}
                     searchQuery={searchQuery}
+                    atDate={timelineDate}
                   />
                 ) : null}
                 {categoryHasVectors(featureCollection) ? (
@@ -401,6 +409,7 @@ export default function MapPage() {
                     category={category}
                     featureCollection={featureCollection}
                     searchQuery={searchQuery}
+                    atDate={timelineDate}
                   />
                 ) : null}
               </div>

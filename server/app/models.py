@@ -29,12 +29,15 @@ class Category(Base):
     __tablename__ = "categories"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("categories.id"), nullable=True, index=True)
     slug: Mapped[str] = mapped_column(String(120), nullable=False, unique=True, index=True)
     label: Mapped[str] = mapped_column(String(255), nullable=False)
     default_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     display_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     legend_style_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    parent: Mapped["Category | None"] = relationship(remote_side=[id], back_populates="children")
+    children: Mapped[list["Category"]] = relationship(back_populates="parent")
     features: Mapped[list["Feature"]] = relationship(back_populates="category")
 
 

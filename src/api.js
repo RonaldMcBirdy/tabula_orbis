@@ -25,6 +25,36 @@ export async function fetchManifest() {
   return requestJson("/api/manifest");
 }
 
+export async function fetchCategories(params = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      query.set(key, value);
+    }
+  }
+  return requestJson(`/api/categories${query.toString() ? `?${query}` : ""}`);
+}
+
+export async function createCategory(payload) {
+  return requestJson("/api/categories", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function updateCategory(categoryId, payload) {
+  return requestJson(`/api/categories/${encodeURIComponent(categoryId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteCategory(categoryId) {
+  return requestJson(`/api/categories/${encodeURIComponent(categoryId)}`, {
+    method: "DELETE",
+  });
+}
+
 export async function fetchFeatures(params = {}) {
   const query = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -44,6 +74,11 @@ export async function updateFeature(featureId, payload) {
 
 export async function fetchFeatureEvents(featureId) {
   return requestJson(`/api/features/${encodeURIComponent(featureId)}/events`);
+}
+
+export async function fetchFeatureSnapshot(featureId, atDate) {
+  const query = new URLSearchParams({ at_date: atDate });
+  return requestJson(`/api/features/${encodeURIComponent(featureId)}/snapshot?${query}`);
 }
 
 export async function createFeatureEvent(featureId, payload) {

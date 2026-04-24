@@ -71,6 +71,32 @@ IMAGE_DIMENSIONS = {
     "images/icon-15.png": {"width": 24, "height": 24},
 }
 
+CATEGORY_PARENT_MAPPING = {
+    "metropoleis": ("settlements", "Settlements", 10),
+    "cities": ("settlements", "Settlements", 10),
+    "towns": ("settlements", "Settlements", 10),
+    "episcopal": ("ecclesiastical", "Ecclesiastical", 20),
+    "churches": ("ecclesiastical", "Ecclesiastical", 20),
+    "fortresses": ("fortifications", "Fortifications", 30),
+    "castles": ("fortifications", "Fortifications", 30),
+    "bridges": ("infrastructure", "Infrastructure", 40),
+    "roads-landmarks": ("infrastructure", "Infrastructure", 40),
+    "farmsteads": ("rural-sites", "Rural Sites", 50),
+}
+
+CATEGORY_LABEL_OVERRIDES = {
+    "bridges": "Bridges",
+    "castles": "Castles",
+    "churches": "Churches",
+    "cities": "Cities",
+    "episcopal": "Episcopal Sees",
+    "farmsteads": "Farmsteads",
+    "fortresses": "Fortresses",
+    "metropoleis": "Metropoleis",
+    "roads-landmarks": "Roads & Landmarks",
+    "towns": "Towns",
+}
+
 
 def clean_html(value: str | None) -> str:
     if bleach is None:
@@ -336,9 +362,20 @@ def import_kmz(session: "Session", kmz_path: str | Path | None = None) -> dict[s
     categories: dict[str, Category] = {}
     for order, (category_name, features) in enumerate(parsed["features_by_category"].items()):
         slug = slugify(category_name)
+        parent = None
+        if slug in CATEGORY_PARENT_MAPPING:
+            parent_slug, parent_label, parent_order = CATEGORY_PARENT_MAPPING[slug]
+            parent = session.scalar(select(Category).where(Category.slug == parent_slug)) or Category(slug=parent_slug)
+            parent.label = parent_label
+            parent.default_visible = True
+            parent.display_order = parent_order
+            parent.legend_style_key = None
+            session.add(parent)
+            session.flush()
         icon_counts = Counter(feature["style_key"] for feature in features if feature["style_key"])
         category = session.scalar(select(Category).where(Category.slug == slug)) or Category(slug=slug)
-        category.label = category_name
+        category.parent = parent
+        category.label = CATEGORY_LABEL_OVERRIDES.get(slug, category_name)
         category.default_visible = True
         category.display_order = order
         category.legend_style_key = icon_counts.most_common(1)[0][0] if icon_counts else None
