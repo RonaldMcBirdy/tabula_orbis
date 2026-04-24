@@ -1,6 +1,6 @@
 # Tabula Orbis - Architectural Memo & Roadmap
 
-_Last updated: 2026-04-24 - Phase 3.5 in progress_
+_Last updated: 2026-04-24 - Phase 4 in progress_
 
 ## 1. Purpose of this document
 
@@ -28,8 +28,8 @@ The two surfaces share a single backend, a single data model, and mostly the sam
 - **Frontend:** React 18 + Vite + Leaflet, routed with `react-router-dom`. `/map` is the public map surface and `/research` is the settlement research browser.
 - **Map UI:** Marker clustering, layer toggles, custom-polygon province drawing with localStorage fallback, HTML-sanitised popups, search highlighting, base-map switching, and a bottom-left timeline slider.
 - **Research UI:** Settlement browser for towns, cities, and metropoleis with inline editing for name, summary, description HTML, coordinates, `validFrom`, `validTo`, and site-history events.
-- **Backend:** FastAPI + SQLAlchemy 2 + PostGIS 3.4 on Postgres 16 in Docker. Soft-delete on mutable tables. Alembic now has forward schema evolution: `0001_initial` and `0002_feature_validity_dates`.
-- **Temporal core:** `features.valid_from` and `features.valid_to` are first-class nullable date columns. `feature_events` stores ranged historical events for feature histories. `GET /api/features` accepts `at_date` and `date_range`; GeoJSON responses include `validFrom` and `validTo`. Phase 3.5 adds event-resolved snapshots for date-specific display state.
+- **Backend:** FastAPI + SQLAlchemy 2 + PostGIS 3.4 on Postgres 16 in Docker. Soft-delete on mutable tables. Alembic now has forward schema evolution through `0006_territory_versions`.
+- **Temporal core:** `features.valid_from` and `features.valid_to` are first-class nullable date columns. `feature_events` stores ranged historical events for feature histories. `GET /api/features` accepts `at_date` and `date_range`; GeoJSON responses include `validFrom` and `validTo`. Event-resolved snapshots provide date-specific display state.
 - **Taxonomy:** Categories now support a two-level hierarchy. The imported layers are grouped into Settlements, Ecclesiastical, Fortifications, Infrastructure, and Rural Sites, with `episcopal` presented as `Episcopal Sees` under Ecclesiastical.
 - **Ingestion:** Robust, idempotent KMZ importer (`server/app/importer.py`) plus a pre-build preprocessor (`scripts/preprocess-kmz.mjs`) that emits per-category GeoJSON to `public/atlas/` as a static fallback when the API is unavailable.
 - **Data loaded:** 6,992 features across 10 flat categories: episcopal, churches, metropoleis, cities, towns, farmsteads, fortresses, castles, bridges, roads-landmarks. There are 15 extracted icons and bounds covering the Mediterranean, Asia Minor, and Eastern Europe.
@@ -46,8 +46,7 @@ The two surfaces share a single backend, a single data model, and mostly the sam
 
 ### What is not there yet
 
-- Event-resolved current-state snapshots are being added in Phase 3.5.
-- No versioned borders / territories.
+- Versioned borders / territories have a Phase 4 foundation but still need richer editing/version-management workflows.
 - No polygon editing beyond draw/delete.
 - No KML/KMZ or GeoJSON export endpoint.
 - No icon upload UI.
@@ -63,7 +62,7 @@ The chosen shape remains a **hybrid temporal model**:
 
 1. **`Feature.valid_from` / `Feature.valid_to`: implemented in Phase 1.** These nullable date columns represent site existence: creation/foundation/first attestation and abandonment/loss/end of attestation. Nullable means unbounded. They are indexed and used by the map timeline.
 2. **`FeatureEvent`: implemented in Phase 2, resolved in Phase 3.5.** The `feature_events` table is keyed by `feature_id`, `event_type`, `start_date`, optional `end_date`, and `payload_json`. Event types cover `name_change`, `conquest`, `loss`, `population`, `theo_political_status`, `thematic_admin`, and `notable_event`. Phase 3.5 folds applicable events into a current-state snapshot for display names, population, status, thematic administration, and political state.
-3. **`TerritoryVersion`: planned for Phase 4.** Time-versioned polygons: `territory_id`, `kind`, `valid_from`, `valid_to`, `geometry`. `kind` should cover `imperial`, `thematic`, `neighbour_state`, and `diocese`.
+3. **`TerritoryVersion`: foundation implemented in Phase 4.** Time-versioned polygons are split into `territories` (`name`, `kind`, `description`) and `territory_versions` (`territory_id`, `valid_from`, `valid_to`, `geometry`). `kind` covers `imperial`, `thematic`, `neighbour_state`, and `diocese`.
 4. **Battles remain point-in-time.** A battle should become either a feature subtype with a single `event_date`, or a feature plus a corresponding event record. Decide this before Phase 3/4 taxonomy work.
 
 This keeps the `features` table small and the hot marker-rendering path cheap. Events are joined only when the user opens a popup, inspects history, or pins a specific date. Territories stay separate because their geometry and rendering concerns differ from placemarks.
@@ -158,11 +157,14 @@ Current Phase 3 deferrals:
 - Icon upload remains a follow-up. Existing KMZ/imported style keys still drive marker icons.
 - Placemark/label sizing from status or population is deferred until after the event-resolved snapshot API contract is stable.
 
-### Phase 3.5 - Event-resolved snapshots
+### Phase 3.5 - Event-resolved snapshots - DONE
 
-Status: IN PROGRESS.
+Completed 2026-04-24. Verified with:
+- `.venv\Scripts\python -m pytest server\tests` - 18 passed
+- `npm run test` - 16 passed
+- `npm run build` - passed
 
-Scope:
+What changed:
 - Add `GET /api/features/{id}/snapshot?at_date=YYYY-MM-DD`.
 - Allow `GET /api/features?at_date=YYYY-MM-DD&include_snapshot=true` to embed the same snapshot contract for map rendering.
 - Use snapshots in popups and marker labels so selected timeline dates produce consistent display names and state.
@@ -190,6 +192,14 @@ Resolution rules:
 
 ### Phase 4 - Borders & territories
 
+Status: IN PROGRESS.
+
+Foundation started 2026-04-24:
+- `server/app/models.py` - added canonical `Territory` and `TerritoryVersion` tables while retaining the old `Province` model only for migration/backward compatibility.
+- `server/alembic/versions/0006_territory_versions.py` - creates `territories` and `territory_versions`, copying existing scratchpad provinces into thematic, open-ended territory versions.
+- `server/app/main.py` and `server/app/schemas.py` - added `/api/territory-versions` list/create/update/delete endpoints, `imperial` / `thematic` / `neighbour_state` / `diocese` kind validation, and half-open date validation (`valid_from <= D < valid_to`).
+- `src/api.js`, `src/pages/MapPage.jsx`, `src/components/LayerPanel.jsx`, and `src/components/map/CustomProvincesLayer.jsx` - map drawing now saves date-aware territory versions instead of scratchpad provinces, and territory overlays refetch when the timeline date changes.
+
 - `territory_versions` table.
 - Polygon editing tool for existing polygons, extending the current freehand drawer.
 - Render imperial borders, thematic/province borders, and neighbour-state borders as date-aware overlays.
@@ -198,7 +208,7 @@ Resolution rules:
 ### Phase 5 - Research UX & export
 
 - Faceted filters: type, theo-political status, theme, date range, population, language, religious sect.
-- KML/KMZ export endpoint. GeoJSON export should fall out naturally.
+- KML/KMZ export endpoint. GeoJSON export should be available on demand so the static timeless fallback can be removed once the database is mandatory.
 - CSV/spreadsheet import for bulk site loading.
 - Structured `sources` and `feature_sources` tables plus citation UI.
 
@@ -233,16 +243,16 @@ Engineering should deliver each phase with importer tooling or admin UI that mak
 - **Inclusive vs. exclusive end dates.** DECIDED: Phase 1 treats feature `valid_to` as inclusive. Phase 4 territory versions should use half-open intervals: `valid_from <= date < valid_to`, so adjacent border versions can share a boundary date without both rendering.
 - **Event-resolved feature snapshots.** DECIDED: Phase 3.5 adds a separate snapshot endpoint and opt-in `include_snapshot=true` for timeline map rendering.
 - **Provinces vs. territories.** DECIDED: remove the scratchpad province concept in Phase 4 and replace it with canonical temporal territories.
-- **Static-file fallback.** Decide whether to freeze static GeoJSON as "baseline/no-date view" or remove fallback once the temporal DB is mandatory.
+- **Static-file fallback.** DECIDED: remove the timeless static fallback once the temporal database is mandatory, provided an on-demand GeoJSON export path exists.
 - **KMZ re-import vs. DB-as-source-of-truth.** DECIDED: the DB is the source of truth from Phase 3.5 onward. Normal KMZ import should become append/merge-only; destructive reloads need an explicit reset path.
 - **Battle modelling.** DECIDED: battles should be point `Feature` rows under a `Battles` category, with `valid_from = valid_to` for the event date plus optional `FeatureEvent` rows for narrative/source detail.
 
 ## 8. Recommended next sprint
 
-The current engineering sprint is the **event-resolved snapshot contract**, followed by Phase 4 borders/territories once that contract is stable.
+The current engineering sprint is **Phase 4 borders/territories**.
 
 Suggested scope:
-- Add `/api/features/{id}/snapshot?at_date=YYYY-MM-DD` for current name, status, population, and administrative state.
-- Keep `/api/features` structural by default, with a later optional `include_snapshot=true` only if map rendering needs bulk event-derived state.
-- Document conflict-resolution rules for multiple events of the same type.
-- Defer borders, auth, full structured citations, battle modelling, and icon upload until taxonomy and event snapshot semantics are stable.
+- Add richer territory version-management UI: edit polygon geometry, clone a version forward, close/open adjacent intervals, and inspect all versions for a territory.
+- Add battle category seeding plus point-feature creation workflow.
+- Add on-demand GeoJSON export before removing static fallback.
+- Defer auth, full structured citations, and icon upload until the territorial editing workflow is stable.

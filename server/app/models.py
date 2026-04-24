@@ -117,6 +117,40 @@ class FeatureMetadata(Base):
     feature: Mapped[Feature] = relationship(back_populates="metadata_entries")
 
 
+class Territory(Base):
+    __tablename__ = "territories"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True, default=uuid_string)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    versions: Mapped[list["TerritoryVersion"]] = relationship(
+        back_populates="territory",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by="TerritoryVersion.valid_from",
+    )
+
+
+class TerritoryVersion(Base):
+    __tablename__ = "territory_versions"
+
+    id: Mapped[str] = mapped_column(String(120), primary_key=True, default=uuid_string)
+    territory_id: Mapped[str] = mapped_column(ForeignKey("territories.id", ondelete="CASCADE"), nullable=False, index=True)
+    valid_from: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    geometry = mapped_column(Geometry(geometry_type="POLYGON", srid=4326, spatial_index=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
+
+    territory: Mapped[Territory] = relationship(back_populates="versions")
+
+
 class Province(Base):
     __tablename__ = "provinces"
 

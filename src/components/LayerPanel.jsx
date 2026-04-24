@@ -70,7 +70,7 @@ export default function LayerPanel({
         </section>
         <section className="panel-section province-panel">
           <div className="panel-heading-row">
-            <h2>Custom Provinces</h2>
+            <h2>Territories</h2>
             <label className="label-toggle">
               <input
                 type="checkbox"
@@ -87,7 +87,7 @@ export default function LayerPanel({
                   ? "Release the mouse to finish the outline."
                   : draftProvincePoints.length >= 3
                     ? "Review the outline, then name and save it."
-                    : "Drag on the map to freehand the province boundary."}
+                    : "Drag on the map to freehand the territory boundary."}
               </p>
               <label>
                 Name
@@ -95,7 +95,7 @@ export default function LayerPanel({
                   type="text"
                   value={provinceForm.name}
                   onChange={(event) => onProvinceFormChange({ name: event.target.value })}
-                  placeholder="Province name"
+                  placeholder="Territory name"
                 />
               </label>
               <label>
@@ -109,7 +109,7 @@ export default function LayerPanel({
               </label>
               <div className="panel-actions compact">
                 <button type="button" onClick={onSaveProvince} disabled={!canSaveProvince}>
-                  Save province
+                  Save territory
                 </button>
                 <button type="button" onClick={onCancelAddProvince} className="ghost">
                   Cancel
@@ -118,7 +118,7 @@ export default function LayerPanel({
             </div>
           ) : (
             <button type="button" className="full-action" onClick={onStartAddProvince}>
-              Add new province
+              Add territory
             </button>
           )}
           {customProvinces.length > 0 ? (
@@ -143,11 +143,11 @@ export default function LayerPanel({
               ))}
             </div>
           ) : (
-            <small className="empty-note">Saved provinces will appear here.</small>
+            <small className="empty-note">Date-aware territories will appear here.</small>
           )}
           {selectedProvince ? (
             <button type="button" className="db-btn db-btn--reset" onClick={() => onDeleteProvince(selectedProvince.id)}>
-              Delete selected province
+              Delete selected territory
             </button>
           ) : null}
         </section>

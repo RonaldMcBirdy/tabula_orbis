@@ -108,18 +108,41 @@ export async function deleteFeatureEvent(featureId, eventId) {
 }
 
 export async function fetchProvinces() {
-  return requestJson("/api/provinces");
+  return requestJson("/api/territory-versions");
 }
 
 export async function createProvince(payload) {
-  return requestJson("/api/provinces", {
+  return requestJson("/api/territory-versions", {
     method: "POST",
     body: JSON.stringify(payload),
   });
 }
 
 export async function deleteProvince(provinceId) {
-  return requestJson(`/api/provinces/${encodeURIComponent(provinceId)}`, {
+  return requestJson(`/api/territory-versions/${encodeURIComponent(provinceId)}`, {
+    method: "DELETE",
+  });
+}
+
+export async function fetchTerritoryVersions(params = {}) {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== "") {
+      query.set(key, value);
+    }
+  }
+  return requestJson(`/api/territory-versions${query.toString() ? `?${query}` : ""}`);
+}
+
+export async function createTerritoryVersion(payload) {
+  return requestJson("/api/territory-versions", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteTerritoryVersion(versionId) {
+  return requestJson(`/api/territory-versions/${encodeURIComponent(versionId)}`, {
     method: "DELETE",
   });
 }

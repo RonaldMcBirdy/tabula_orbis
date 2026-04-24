@@ -132,3 +132,33 @@ class ProvinceResponse(BaseModel):
     description: str
     coordinates: list[list[float]]
     createdAt: str | None = None
+
+
+class TerritoryVersionCreate(BaseModel):
+    name: str
+    kind: str = "thematic"
+    description: str = ""
+    validFrom: str
+    validTo: str | None = None
+    coordinates: list[list[float]]
+
+
+class TerritoryVersionUpdate(BaseModel):
+    name: str | None = None
+    kind: str | None = None
+    description: str | None = None
+    validFrom: str | None = None
+    validTo: str | None = None
+    coordinates: list[list[float]] | None = None
+
+
+class TerritoryVersionResponse(BaseModel):
+    id: str
+    territoryId: str
+    name: str
+    kind: str
+    description: str
+    validFrom: str
+    validTo: str | None = None
+    coordinates: list[list[float]]
+    createdAt: str | None = None

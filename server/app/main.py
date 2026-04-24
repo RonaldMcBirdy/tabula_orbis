@@ -17,7 +17,7 @@ from server.app.geojson import (
     polygon_from_latlngs,
 )
 from server.app.importer import clean_html, import_kmz, slugify
-from server.app.models import AtlasSource, Category, Feature, FeatureEvent, FeatureMetadata, Province, Style
+from server.app.models import AtlasSource, Category, Feature, FeatureEvent, FeatureMetadata, Province, Style, Territory, TerritoryVersion
 from server.app.schemas import (
     CategoryCreate,
     CategoryResponse,
@@ -34,6 +34,9 @@ from server.app.schemas import (
     ProvinceCreate,
     ProvinceResponse,
     ProvinceUpdate,
+    TerritoryVersionCreate,
+    TerritoryVersionResponse,
+    TerritoryVersionUpdate,
 )
 
 settings = get_settings()
@@ -47,6 +50,8 @@ FEATURE_EVENT_TYPES = {
     "thematic_admin",
     "notable_event",
 }
+
+TERRITORY_KINDS = {"imperial", "thematic", "neighbour_state", "diocese"}
 
 EVENT_PAYLOAD_KEYS = {
     "name_change": {"old_name", "new_name", "source_title", "source_url", "source_note", "note"},
@@ -106,6 +111,20 @@ def normalize_event_type(event_type: str) -> str:
 def validate_event_dates(start_date: date, end_date: date | None) -> None:
     if end_date and start_date > end_date:
         raise HTTPException(status_code=400, detail="startDate must be on or before endDate")
+
+
+def normalize_territory_kind(kind: str) -> str:
+    normalized = kind.strip().lower().replace("-", "_")
+    if normalized not in TERRITORY_KINDS:
+        raise HTTPException(status_code=400, detail=f"kind must be one of: {', '.join(sorted(TERRITORY_KINDS))}")
+    return normalized
+
+
+def validate_territory_dates(valid_from: date | None, valid_to: date | None) -> None:
+    if valid_from is None:
+        raise HTTPException(status_code=400, detail="validFrom is required")
+    if valid_to and valid_from >= valid_to:
+        raise HTTPException(status_code=400, detail="validFrom must be before validTo")
 
 
 def validate_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -636,6 +655,136 @@ def update_feature_event(
 def delete_feature_event(feature_id: str, event_id: str, session: Session = Depends(get_session)) -> dict[str, bool]:
     event = get_live_event(session, feature_id, event_id)
     event.deleted_at = datetime.now(timezone.utc)
+    session.commit()
+    return {"deleted": True}
+
+
+def territory_version_to_response(session: Session, version: TerritoryVersion) -> TerritoryVersionResponse:
+    geometry = geometry_to_geojson(session, version.geometry)
+    return TerritoryVersionResponse(
+        id=version.id,
+        territoryId=version.territory_id,
+        name=version.territory.name,
+        kind=version.territory.kind,
+        description=version.territory.description,
+        validFrom=version.valid_from.isoformat(),
+        validTo=version.valid_to.isoformat() if version.valid_to else None,
+        coordinates=latlngs_from_polygon(geometry),
+        createdAt=version.created_at.isoformat() if version.created_at else None,
+    )
+
+
+def get_live_territory_version(session: Session, version_id: str) -> TerritoryVersion:
+    version = session.scalar(
+        select(TerritoryVersion)
+        .join(Territory)
+        .options(joinedload(TerritoryVersion.territory))
+        .where(
+            TerritoryVersion.id == version_id,
+            TerritoryVersion.deleted_at.is_(None),
+            Territory.deleted_at.is_(None),
+        )
+    )
+    if version is None:
+        raise HTTPException(status_code=404, detail="Territory version not found")
+    return version
+
+
+@app.get("/api/territory-versions", response_model=list[TerritoryVersionResponse])
+def list_territory_versions(
+    kind: str | None = None,
+    at_date: date | None = None,
+    session: Session = Depends(get_session),
+) -> list[TerritoryVersionResponse]:
+    query = (
+        select(TerritoryVersion)
+        .join(Territory)
+        .options(joinedload(TerritoryVersion.territory))
+        .where(TerritoryVersion.deleted_at.is_(None), Territory.deleted_at.is_(None))
+        .order_by(Territory.kind, Territory.name, TerritoryVersion.valid_from)
+    )
+    if kind:
+        query = query.where(Territory.kind == normalize_territory_kind(kind))
+    if at_date:
+        query = query.where(TerritoryVersion.valid_from <= at_date)
+        query = query.where(or_(TerritoryVersion.valid_to.is_(None), TerritoryVersion.valid_to > at_date))
+    versions = session.scalars(query).unique().all()
+    return [territory_version_to_response(session, version) for version in versions]
+
+
+@app.post("/api/territory-versions", response_model=TerritoryVersionResponse)
+def create_territory_version(
+    payload: TerritoryVersionCreate,
+    session: Session = Depends(get_session),
+) -> TerritoryVersionResponse:
+    if len(payload.coordinates) < 3:
+        raise HTTPException(status_code=400, detail="Territory polygons require at least three points")
+    valid_from = parse_iso_date(payload.validFrom, "validFrom")
+    valid_to = parse_iso_date(payload.validTo, "validTo")
+    validate_territory_dates(valid_from, valid_to)
+    territory = Territory(
+        id=f"territory-{uuid4()}",
+        name=payload.name.strip() or "Untitled territory",
+        kind=normalize_territory_kind(payload.kind),
+        description=payload.description.strip(),
+    )
+    version = TerritoryVersion(
+        id=f"territory-version-{uuid4()}",
+        territory=territory,
+        valid_from=valid_from,
+        valid_to=valid_to,
+        geometry=geojson_to_wkt_expression(polygon_from_latlngs(payload.coordinates)),
+    )
+    session.add(territory)
+    session.add(version)
+    session.commit()
+    session.refresh(version)
+    return territory_version_to_response(session, version)
+
+
+@app.patch("/api/territory-versions/{version_id}", response_model=TerritoryVersionResponse)
+def update_territory_version(
+    version_id: str,
+    payload: TerritoryVersionUpdate,
+    session: Session = Depends(get_session),
+) -> TerritoryVersionResponse:
+    version = get_live_territory_version(session, version_id)
+    if payload.name is not None:
+        version.territory.name = payload.name.strip() or "Untitled territory"
+    if payload.kind is not None:
+        version.territory.kind = normalize_territory_kind(payload.kind)
+    if payload.description is not None:
+        version.territory.description = payload.description.strip()
+    if "validFrom" in payload.model_fields_set:
+        version.valid_from = parse_iso_date(payload.validFrom, "validFrom")
+    if "validTo" in payload.model_fields_set:
+        version.valid_to = parse_iso_date(payload.validTo, "validTo")
+    validate_territory_dates(version.valid_from, version.valid_to)
+    if payload.coordinates is not None:
+        if len(payload.coordinates) < 3:
+            raise HTTPException(status_code=400, detail="Territory polygons require at least three points")
+        version.geometry = geojson_to_wkt_expression(polygon_from_latlngs(payload.coordinates))
+    session.commit()
+    session.refresh(version)
+    return territory_version_to_response(session, version)
+
+
+@app.delete("/api/territory-versions/{version_id}")
+def delete_territory_version(version_id: str, session: Session = Depends(get_session)) -> dict[str, bool]:
+    version = get_live_territory_version(session, version_id)
+    version.deleted_at = datetime.now(timezone.utc)
+    live_count = (
+        session.scalar(
+            select(func.count(TerritoryVersion.id)).where(
+                TerritoryVersion.territory_id == version.territory_id,
+                TerritoryVersion.id != version.id,
+                TerritoryVersion.deleted_at.is_(None),
+            )
+        )
+        or 0
+    )
+    if live_count == 0:
+        version.territory.deleted_at = datetime.now(timezone.utc)
     session.commit()
     return {"deleted": True}
 

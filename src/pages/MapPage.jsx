@@ -5,7 +5,13 @@ import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
 
-import { createProvince, deleteProvince, fetchFeatures, fetchManifest, fetchProvinces } from "../api.js";
+import {
+  createTerritoryVersion,
+  deleteTerritoryVersion,
+  fetchFeatures,
+  fetchManifest,
+  fetchTerritoryVersions,
+} from "../api.js";
 import { BASE_LAYERS, EMPTY_BOUNDS } from "../constants.js";
 import { categoryHasPoints, categoryHasVectors, featureMatchesSearch, loadCustomProvinces, saveCustomProvinces } from "../utils/geo.js";
 import BoundsController from "../components/map/BoundsController.jsx";
@@ -83,7 +89,7 @@ export default function MapPage() {
 
     async function loadProvinces() {
       try {
-        const provinces = await fetchProvinces();
+        const provinces = await fetchTerritoryVersions({ at_date: timelineDate });
         if (!cancelled) {
           setCustomProvinces(provinces);
           setUsesLocalProvinceStore(false);
@@ -101,7 +107,7 @@ export default function MapPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [timelineDate]);
 
   useEffect(() => {
     if (!manifest) {
@@ -195,9 +201,12 @@ export default function MapPage() {
     }
 
     try {
-      const newProvince = await createProvince({
+      const newProvince = await createTerritoryVersion({
         name,
+        kind: "thematic",
         description: provinceForm.description.trim(),
+        validFrom: timelineDate ?? "0330-01-01",
+        validTo: null,
         coordinates: draftProvincePoints,
       });
 
@@ -205,9 +214,13 @@ export default function MapPage() {
       setSelectedProvinceId(newProvince.id);
     } catch (nextError) {
       const newProvince = {
-        id: `province-${Date.now()}`,
+        id: `territory-version-${Date.now()}`,
+        territoryId: `territory-${Date.now()}`,
         name,
+        kind: "thematic",
         description: provinceForm.description.trim(),
+        validFrom: timelineDate ?? "0330-01-01",
+        validTo: null,
         coordinates: draftProvincePoints,
         createdAt: new Date().toISOString(),
       };
@@ -226,12 +239,12 @@ export default function MapPage() {
     setIsDrawingProvince(false);
     setDraftProvincePoints([]);
     setProvinceForm({ name: "", description: "" });
-  }, [draftProvincePoints, provinceForm.description, provinceForm.name]);
+  }, [draftProvincePoints, provinceForm.description, provinceForm.name, timelineDate]);
 
   const removeProvince = useCallback(async (provinceId) => {
     if (!usesLocalProvinceStore) {
       try {
-        await deleteProvince(provinceId);
+        await deleteTerritoryVersion(provinceId);
       } catch (nextError) {
         setError(nextError.message);
         return;

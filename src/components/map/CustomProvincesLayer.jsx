@@ -3,14 +3,27 @@ import { provinceCenter } from "../../utils/geo.js";
 import { leafletLabelIcon } from "../../utils/icons.js";
 
 function ProvincePopup({ province, onDeleteProvince }) {
+  const validRange = province.validTo
+    ? `${province.validFrom} to ${province.validTo}`
+    : `${province.validFrom} onward`;
   return (
     <Popup maxWidth={360}>
       <div className="popup-card province-popup">
         <h3>{province.name}</h3>
+        <dl className="popup-meta">
+          <div>
+            <dt>Kind</dt>
+            <dd>{province.kind?.replace("_", " ") ?? "territory"}</dd>
+          </div>
+          <div>
+            <dt>Valid</dt>
+            <dd>{validRange}</dd>
+          </div>
+        </dl>
         {province.description ? <p>{province.description}</p> : <p>No description added.</p>}
         {onDeleteProvince ? (
           <button type="button" className="popup-delete-btn" onClick={() => onDeleteProvince(province.id)}>
-            Delete province
+            Delete territory
           </button>
         ) : null}
       </div>
