@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgis/postgis:16-3.4
+    container_name: tabula-orbis-postgis
+    environment:
+      POSTGRES_DB: tabula_orbis
+      POSTGRES_USER: tabula
+      POSTGRES_PASSWORD: tabula
+    ports:
+      - "5432:5432"
+    volumes:
+      - tabula_orbis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tabula -d tabula_orbis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  tabula_orbis_pgdata:

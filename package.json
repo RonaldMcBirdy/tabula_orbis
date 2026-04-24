@@ -7,7 +7,12 @@
     "dev": "node scripts/preprocess-kmz.mjs && vite",
     "build": "node scripts/preprocess-kmz.mjs && vite build",
     "preprocess:kmz": "node scripts/preprocess-kmz.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "backend:dev": "python -m uvicorn server.app.main:app --reload --port 8000",
+    "backend:migrate": "python -m alembic -c server/alembic.ini upgrade head",
+    "backend:import-kmz": "python -m server.scripts.import_kmz",
+    "backend:test": "python -m pytest server/tests",
+    "start:dev": "powershell -ExecutionPolicy Bypass -File scripts/start-dev.ps1"
   },
   "dependencies": {
     "fast-xml-parser": "^4.5.3",

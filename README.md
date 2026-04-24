@@ -33,6 +33,28 @@ http://localhost:5173/
 
 The `dev` script runs the KMZ preprocessing step before starting Vite, so changes to the bundled KMZ are reflected when the server starts.
 
+## Backend Data Store
+
+The app now includes a local-first FastAPI backend backed by Postgres/PostGIS. Start the backend-backed workflow with:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r server\requirements.txt
+docker compose up -d db
+npm run backend:migrate
+npm run backend:import-kmz
+npm run backend:dev
+```
+
+Then start the frontend in a second terminal:
+
+```powershell
+npm run dev
+```
+
+Vite proxies `/api` to `http://localhost:8000`. During the migration, the frontend falls back to generated static `/atlas` files if the API is unavailable.
+
 ## Build And Preview
 
 Create a production build:

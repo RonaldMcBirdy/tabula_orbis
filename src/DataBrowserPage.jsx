@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { fetchFeatures, updateFeature } from "./api.js";
 
 const SETTLEMENT_CATEGORIES = [
   { id: "towns", label: "Towns" },
@@ -7,24 +8,6 @@ const SETTLEMENT_CATEGORIES = [
 ];
 
 const PAGE_SIZE = 25;
-const STORAGE_KEY = "tabula_orbis_edits";
-
-function loadEditsFromStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function persistEdits(edits) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(edits));
-  } catch (e) {
-    console.error("Failed to persist edits:", e);
-  }
-}
 
 export default function DataBrowserPage({ onBack }) {
   const [allFeatures, setAllFeatures] = useState([]);
@@ -34,7 +17,7 @@ export default function DataBrowserPage({ onBack }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [editingId, setEditingId] = useState(null);
   const [editValues, setEditValues] = useState({});
-  const [savedEdits, setSavedEdits] = useState(loadEditsFromStorage);
+  const [editedIds, setEditedIds] = useState(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -44,9 +27,16 @@ export default function DataBrowserPage({ onBack }) {
       try {
         const features = [];
         for (const cat of SETTLEMENT_CATEGORIES) {
-          const res = await fetch(`/atlas/${cat.id}.geojson`);
-          if (!res.ok) continue;
-          const fc = await res.json();
+          let fc;
+          try {
+            fc = await fetchFeatures({ category: cat.id, limit: 10000 });
+          } catch {
+            const res = await fetch(`/atlas/${cat.id}.geojson`);
+            if (!res.ok) {
+              continue;
+            }
+            fc = await res.json();
+          }
           for (const f of fc.features) {
             features.push({ ...f, _categoryId: cat.id, _categoryLabel: cat.label });
           }
@@ -56,7 +46,9 @@ export default function DataBrowserPage({ onBack }) {
           setLoadingState("ready");
         }
       } catch {
-        if (!cancelled) setLoadingState("error");
+        if (!cancelled) {
+          setLoadingState("error");
+        }
       }
     }
 
@@ -66,32 +58,8 @@ export default function DataBrowserPage({ onBack }) {
     };
   }, []);
 
-  const displayFeatures = useMemo(() => {
-    return allFeatures.map((f) => {
-      const edit = savedEdits[f.id];
-      if (!edit) return f;
-      return {
-        ...f,
-        properties: {
-          ...f.properties,
-          name: edit.name ?? f.properties.name,
-          descriptionHtml: edit.descriptionHtml ?? f.properties.descriptionHtml,
-          startDate: edit.startDate ?? f.properties.startDate ?? null,
-          endDate: edit.endDate ?? f.properties.endDate ?? null,
-          metadata: {
-            ...f.properties.metadata,
-            Summary: edit.summary ?? f.properties.metadata?.Summary,
-          },
-        },
-        geometry: edit.coordinates
-          ? { ...f.geometry, coordinates: [edit.coordinates.lng, edit.coordinates.lat] }
-          : f.geometry,
-      };
-    });
-  }, [allFeatures, savedEdits]);
-
   const filtered = useMemo(() => {
-    let result = displayFeatures;
+    let result = allFeatures;
     if (categoryFilter !== "all") {
       result = result.filter((f) => f._categoryId === categoryFilter);
     }
@@ -104,7 +72,7 @@ export default function DataBrowserPage({ onBack }) {
       );
     }
     return result;
-  }, [displayFeatures, categoryFilter, searchQuery]);
+  }, [allFeatures, categoryFilter, searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const clampedPage = Math.min(currentPage, totalPages);
@@ -121,15 +89,14 @@ export default function DataBrowserPage({ onBack }) {
 
   function startEdit(feature) {
     setEditingId(feature.id);
-    const edit = savedEdits[feature.id];
     setEditValues({
-      name: edit?.name ?? feature.properties.name ?? "",
-      summary: edit?.summary ?? feature.properties.metadata?.Summary ?? "",
-      descriptionHtml: edit?.descriptionHtml ?? feature.properties.descriptionHtml ?? "",
-      lat: String(edit?.coordinates?.lat ?? feature.geometry?.coordinates?.[1] ?? ""),
-      lng: String(edit?.coordinates?.lng ?? feature.geometry?.coordinates?.[0] ?? ""),
-      startDate: edit?.startDate ?? feature.properties.startDate ?? "",
-      endDate: edit?.endDate ?? feature.properties.endDate ?? "",
+      name: feature.properties.name ?? "",
+      summary: feature.properties.metadata?.Summary ?? "",
+      descriptionHtml: feature.properties.descriptionHtml ?? "",
+      lat: String(feature.geometry?.coordinates?.[1] ?? ""),
+      lng: String(feature.geometry?.coordinates?.[0] ?? ""),
+      startDate: feature.properties.metadata?.startDate ?? "",
+      endDate: feature.properties.metadata?.endDate ?? "",
     });
   }
 
@@ -138,54 +105,72 @@ export default function DataBrowserPage({ onBack }) {
     setEditValues({});
   }
 
-  function commitEdit(featureId) {
+  async function commitEdit(feature) {
     const lat = parseFloat(editValues.lat);
     const lng = parseFloat(editValues.lng);
-    const nextEdits = {
-      ...savedEdits,
-      [featureId]: {
-        name: editValues.name,
-        summary: editValues.summary,
-        descriptionHtml: editValues.descriptionHtml,
-        coordinates: {
-          lat: Number.isFinite(lat) ? lat : 0,
-          lng: Number.isFinite(lng) ? lng : 0,
-        },
-        startDate: editValues.startDate || null,
-        endDate: editValues.endDate || null,
-      },
+    const metadata = {
+      ...(feature.properties.metadata ?? {}),
+      Summary: editValues.summary,
+      startDate: editValues.startDate || "",
+      endDate: editValues.endDate || "",
     };
-    setSavedEdits(nextEdits);
-    persistEdits(nextEdits);
+    const payload = {
+      name: editValues.name,
+      descriptionHtml: editValues.descriptionHtml,
+      metadata,
+      geometry:
+        Number.isFinite(lat) && Number.isFinite(lng)
+          ? { ...feature.geometry, coordinates: [lng, lat] }
+          : feature.geometry,
+    };
+
+    try {
+      const updated = await updateFeature(feature.id, payload);
+      setAllFeatures((current) =>
+        current.map((item) =>
+          item.id === feature.id
+            ? { ...updated, _categoryId: item._categoryId, _categoryLabel: item._categoryLabel }
+            : item,
+        ),
+      );
+    } catch {
+      setAllFeatures((current) =>
+        current.map((item) =>
+          item.id === feature.id
+            ? {
+                ...item,
+                properties: {
+                  ...item.properties,
+                  name: payload.name,
+                  descriptionHtml: payload.descriptionHtml,
+                  metadata,
+                },
+                geometry: payload.geometry,
+              }
+            : item,
+        ),
+      );
+    }
+
+    setEditedIds((current) => new Set([...current, feature.id]));
     setEditingId(null);
     setEditValues({});
   }
 
-  function resetFeatureEdit(featureId) {
-    const nextEdits = { ...savedEdits };
-    delete nextEdits[featureId];
-    setSavedEdits(nextEdits);
-    persistEdits(nextEdits);
-    if (editingId === featureId) {
-      setEditingId(null);
-      setEditValues({});
-    }
-  }
-
-  const editedCount = Object.keys(savedEdits).length;
+  const editedCount = editedIds.size;
 
   return (
     <div className="db-page">
       <div className="db-header">
         <div className="db-header-left">
           <button className="db-back-btn" onClick={onBack} type="button">
-            ← Map
+            Back to map
           </button>
           <div>
             <h1 className="db-title">Settlement Browser</h1>
             <p className="db-subtitle">
               Towns, cities &amp; metropoleis
-              {loadingState === "ready" && ` · ${allFeatures.length} total`}
+              {loadingState === "ready" && ` - ${allFeatures.length} total`}
               {editedCount > 0 && <span className="db-edit-badge">{editedCount} edited</span>}
             </p>
           </div>
@@ -205,7 +190,7 @@ export default function DataBrowserPage({ onBack }) {
           </select>
           <input
             type="search"
-            placeholder="Search by name or summary…"
+            placeholder="Search by name or summary..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="db-search"
@@ -213,9 +198,7 @@ export default function DataBrowserPage({ onBack }) {
         </div>
       </div>
 
-      {loadingState === "loading" && (
-        <div className="db-state">Loading settlement data…</div>
-      )}
+      {loadingState === "loading" && <div className="db-state">Loading settlement data...</div>}
       {loadingState === "error" && (
         <div className="db-state db-state--error">Failed to load settlement data.</div>
       )}
@@ -245,7 +228,7 @@ export default function DataBrowserPage({ onBack }) {
               <tbody>
                 {paginated.map((feature) => {
                   const isEditing = editingId === feature.id;
-                  const isEdited = Boolean(savedEdits[feature.id]);
+                  const isEdited = editedIds.has(feature.id);
                   const coords = feature.geometry?.coordinates;
 
                   if (isEditing) {
@@ -341,7 +324,7 @@ export default function DataBrowserPage({ onBack }) {
                               <button
                                 type="button"
                                 className="db-btn db-btn--save"
-                                onClick={() => commitEdit(feature.id)}
+                                onClick={() => commitEdit(feature)}
                               >
                                 Save
                               </button>
@@ -352,15 +335,6 @@ export default function DataBrowserPage({ onBack }) {
                               >
                                 Cancel
                               </button>
-                              {isEdited && (
-                                <button
-                                  type="button"
-                                  className="db-btn db-btn--reset"
-                                  onClick={() => resetFeatureEdit(feature.id)}
-                                >
-                                  Reset to original
-                                </button>
-                              )}
                             </div>
                           </div>
                         </td>
@@ -369,33 +343,28 @@ export default function DataBrowserPage({ onBack }) {
                   }
 
                   return (
-                    <tr
-                      key={feature.id}
-                      className={`db-row${isEdited ? " db-row--edited" : ""}`}
-                    >
+                    <tr key={feature.id} className={`db-row${isEdited ? " db-row--edited" : ""}`}>
                       <td>
                         {isEdited && <span className="db-dot" title="Edited" />}
-                        {feature.properties.name || (
-                          <em className="db-empty">Unnamed</em>
-                        )}
+                        {feature.properties.name || <em className="db-empty">Unnamed</em>}
                       </td>
                       <td>{feature._categoryLabel}</td>
                       <td className="db-cell--summary">
                         {feature.properties.metadata?.Summary ? (
                           feature.properties.metadata.Summary.length > 120 ? (
-                            feature.properties.metadata.Summary.slice(0, 120) + "…"
+                            `${feature.properties.metadata.Summary.slice(0, 120)}...`
                           ) : (
                             feature.properties.metadata.Summary
                           )
                         ) : (
-                          <em className="db-empty">—</em>
+                          <em className="db-empty">-</em>
                         )}
                       </td>
                       <td className="db-cell--coord">
-                        {coords?.[1] != null ? coords[1].toFixed(4) : "—"}
+                        {coords?.[1] != null ? coords[1].toFixed(4) : "-"}
                       </td>
                       <td className="db-cell--coord">
-                        {coords?.[0] != null ? coords[0].toFixed(4) : "—"}
+                        {coords?.[0] != null ? coords[0].toFixed(4) : "-"}
                       </td>
                       <td>
                         <button
@@ -420,7 +389,7 @@ export default function DataBrowserPage({ onBack }) {
               disabled={clampedPage <= 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
             >
-              ← Prev
+              Prev
             </button>
             <span className="db-page-info">
               {clampedPage} / {totalPages}
@@ -431,7 +400,7 @@ export default function DataBrowserPage({ onBack }) {
               disabled={clampedPage >= totalPages}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
             >
-              Next →
+              Next
             </button>
           </div>
         </>

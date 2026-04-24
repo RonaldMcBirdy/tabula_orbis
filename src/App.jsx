@@ -7,6 +7,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import "leaflet/dist/leaflet.css";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import { createProvince, deleteProvince, fetchFeatures, fetchManifest, fetchProvinces } from "./api.js";
 import DataBrowserPage from "./DataBrowserPage.jsx";
 
 const EMPTY_BOUNDS = [
@@ -550,10 +551,12 @@ function LayerPanel({
   onCancelAddProvince,
   onProvinceFormChange,
   onSaveProvince,
+  onDeleteProvince,
   onToggleProvinceLabels,
   onSelectProvince,
 }) {
   const canSaveProvince = provinceForm.name.trim() && draftProvincePoints.length >= 3;
+  const selectedProvince = customProvinces.find((province) => province.id === selectedProvinceId);
 
   return (
     <aside className="sidebar">
@@ -648,6 +651,11 @@ function LayerPanel({
           ) : (
             <small className="empty-note">Saved provinces will appear here.</small>
           )}
+          {selectedProvince ? (
+            <button type="button" className="db-btn db-btn--reset" onClick={() => onDeleteProvince(selectedProvince.id)}>
+              Delete selected province
+            </button>
+          ) : null}
         </section>
         <div className="panel-actions">
           <button type="button" onClick={onShowAll}>
@@ -713,7 +721,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState("");
   const [baseLayer, setBaseLayer] = useState("map");
   const [currentView, setCurrentView] = useState("map");
-  const [customProvinces, setCustomProvinces] = useState(() => loadCustomProvinces());
+  const [customProvinces, setCustomProvinces] = useState([]);
   const [isAddProvinceMode, setIsAddProvinceMode] = useState(false);
   const [draftProvincePoints, setDraftProvincePoints] = useState([]);
   const [isDrawingProvince, setIsDrawingProvince] = useState(false);
@@ -726,12 +734,16 @@ function App() {
 
     async function bootstrap() {
       try {
-        const response = await fetch("/atlas/manifest.json");
-        if (!response.ok) {
-          throw new Error(`Manifest request failed with ${response.status}`);
+        let nextManifest;
+        try {
+          nextManifest = await fetchManifest();
+        } catch {
+          const response = await fetch("/atlas/manifest.json");
+          if (!response.ok) {
+            throw new Error(`Manifest request failed with ${response.status}`);
+          }
+          nextManifest = await response.json();
         }
-
-        const nextManifest = await response.json();
         if (cancelled) {
           return;
         }
@@ -759,6 +771,29 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    async function loadProvinces() {
+      try {
+        const provinces = await fetchProvinces();
+        if (!cancelled) {
+          setCustomProvinces(provinces);
+        }
+      } catch {
+        if (!cancelled) {
+          setCustomProvinces(loadCustomProvinces());
+        }
+      }
+    }
+
+    loadProvinces();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!manifest) {
       return;
     }
@@ -778,12 +813,17 @@ function App() {
       const responses = await Promise.all(
         visibleIds.map(async (categoryId) => {
           const category = manifest.categories.find((item) => item.id === categoryId);
-          const response = await fetch(category.dataFile);
-          if (!response.ok) {
-            throw new Error(`Category request failed for ${category.label}`);
+          try {
+            const featureCollection = await fetchFeatures({ category: category.id, limit: 10000 });
+            return [categoryId, featureCollection];
+          } catch {
+            const response = await fetch(category.dataFile);
+            if (!response.ok) {
+              throw new Error(`Category request failed for ${category.label}`);
+            }
+            const featureCollection = await response.json();
+            return [categoryId, featureCollection];
           }
-          const featureCollection = await response.json();
-          return [categoryId, featureCollection];
         }),
       );
 
@@ -812,10 +852,6 @@ function App() {
     };
   }, [activeCategories, loadedCategories, manifest]);
 
-  useEffect(() => {
-    window.localStorage.setItem(CUSTOM_PROVINCES_STORAGE_KEY, JSON.stringify(customProvinces));
-  }, [customProvinces]);
-
   const updateDraftProvince = useCallback((points) => {
     setDraftProvincePoints(points);
   }, []);
@@ -831,27 +867,54 @@ function App() {
     setProvinceForm({ name: "", description: "" });
   }, []);
 
-  const saveProvince = useCallback(() => {
+  const saveProvince = useCallback(async () => {
     const name = provinceForm.name.trim();
     if (!name || draftProvincePoints.length < 3) {
       return;
     }
 
-    const newProvince = {
-      id: `province-${Date.now()}`,
-      name,
-      description: provinceForm.description.trim(),
-      coordinates: draftProvincePoints,
-      createdAt: new Date().toISOString(),
-    };
+    try {
+      const newProvince = await createProvince({
+        name,
+        description: provinceForm.description.trim(),
+        coordinates: draftProvincePoints,
+      });
 
-    setCustomProvinces((current) => [...current, newProvince]);
-    setSelectedProvinceId(newProvince.id);
+      setCustomProvinces((current) => [...current, newProvince]);
+      setSelectedProvinceId(newProvince.id);
+    } catch (nextError) {
+      const newProvince = {
+        id: `province-${Date.now()}`,
+        name,
+        description: provinceForm.description.trim(),
+        coordinates: draftProvincePoints,
+        createdAt: new Date().toISOString(),
+      };
+
+      setCustomProvinces((current) => {
+        const next = [...current, newProvince];
+        window.localStorage.setItem(CUSTOM_PROVINCES_STORAGE_KEY, JSON.stringify(next));
+        return next;
+      });
+      setSelectedProvinceId(newProvince.id);
+      setError(nextError.message);
+    }
+
     setIsAddProvinceMode(false);
     setIsDrawingProvince(false);
     setDraftProvincePoints([]);
     setProvinceForm({ name: "", description: "" });
   }, [draftProvincePoints, provinceForm.description, provinceForm.name]);
+
+  const removeProvince = useCallback(async (provinceId) => {
+    try {
+      await deleteProvince(provinceId);
+    } catch (nextError) {
+      setError(nextError.message);
+    }
+    setCustomProvinces((current) => current.filter((province) => province.id !== provinceId));
+    setSelectedProvinceId(null);
+  }, []);
 
   const iconsByStyle = useMemo(() => manifest?.icons ?? {}, [manifest]);
   const activeBaseLayer = BASE_LAYERS[baseLayer];
@@ -944,6 +1007,7 @@ function App() {
           }))
         }
         onSaveProvince={saveProvince}
+        onDeleteProvince={removeProvince}
         onToggleProvinceLabels={setShowProvinceLabels}
         onSelectProvince={setSelectedProvinceId}
       />
