@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -42,6 +42,34 @@ app.add_middleware(
 )
 
 
+def parse_iso_date(value: str | None, field_name: str) -> date | None:
+    if value is None or value == "":
+        return None
+    try:
+        return date.fromisoformat(value)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=f"{field_name} must be YYYY-MM-DD") from error
+
+
+def parse_date_range_param(value: str | None) -> tuple[date | None, date | None]:
+    if not value:
+        return None, None
+    separator = ".." if ".." in value else ","
+    parts = [part.strip() for part in value.split(separator)]
+    if len(parts) != 2:
+        raise HTTPException(status_code=400, detail="date_range must be START,END or START..END")
+    start = parse_iso_date(parts[0], "date_range start")
+    end = parse_iso_date(parts[1], "date_range end")
+    if start and end and start > end:
+        raise HTTPException(status_code=400, detail="date_range start must be on or before end")
+    return start, end
+
+
+def validate_feature_dates(valid_from: date | None, valid_to: date | None) -> None:
+    if valid_from and valid_to and valid_from > valid_to:
+        raise HTTPException(status_code=400, detail="validFrom must be on or before validTo")
+
+
 def metadata_dict(feature: Feature) -> dict[str, str]:
     return {entry.key: entry.value for entry in feature.metadata_entries}
 
@@ -58,6 +86,8 @@ def feature_to_geojson(session: Session, feature: Feature) -> dict[str, Any]:
             "categoryId": feature.category.slug,
             "styleId": style_key,
             "descriptionHtml": feature.description_html,
+            "validFrom": feature.valid_from.isoformat() if feature.valid_from else None,
+            "validTo": feature.valid_to.isoformat() if feature.valid_to else None,
             "metadata": metadata_dict(feature),
             "strokeColor": feature.style.stroke_color if feature.style else None,
             "fillColor": feature.style.fill_color if feature.style else None,
@@ -84,8 +114,27 @@ def get_style(session: Session, style_key: str | None) -> Style | None:
 def replace_metadata(session: Session, feature: Feature, metadata: dict[str, str]) -> None:
     session.query(FeatureMetadata).filter(FeatureMetadata.feature_id == feature.id).delete()
     for key, value in metadata.items():
+        if key in {"startDate", "endDate"}:
+            continue
         if value is not None and str(value).strip():
             session.add(FeatureMetadata(feature_id=feature.id, key=key, value=str(value)))
+
+
+def apply_temporal_filters(query: Any, at_date: date | None, date_range: str | None) -> Any:
+    if at_date:
+        query = query.where(
+            or_(Feature.valid_from.is_(None), Feature.valid_from <= at_date),
+            or_(Feature.valid_to.is_(None), Feature.valid_to >= at_date),
+        )
+
+    range_start, range_end = parse_date_range_param(date_range)
+    if range_start or range_end:
+        if range_end:
+            query = query.where(or_(Feature.valid_from.is_(None), Feature.valid_from <= range_end))
+        if range_start:
+            query = query.where(or_(Feature.valid_to.is_(None), Feature.valid_to >= range_start))
+
+    return query
 
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -158,6 +207,8 @@ def list_features(
     q: str | None = None,
     bbox: str | None = None,
     geometry_type: str | None = None,
+    at_date: date | None = None,
+    date_range: str | None = None,
     limit: int = Query(5000, ge=1, le=10000),
     offset: int = Query(0, ge=0),
     session: Session = Depends(get_session),
@@ -185,6 +236,7 @@ def list_features(
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from error
         query = query.where(func.ST_Intersects(Feature.geometry, envelope))
+    query = apply_temporal_filters(query, at_date, date_range)
 
     features = session.scalars(query).unique().all()
     return {
@@ -215,9 +267,12 @@ def create_feature(payload: FeatureCreate, session: Session = Depends(get_sessio
         style_id=style.id if style else None,
         name=payload.name.strip() or "Untitled feature",
         description_html=clean_html(payload.descriptionHtml),
+        valid_from=parse_iso_date(payload.validFrom, "validFrom"),
+        valid_to=parse_iso_date(payload.validTo, "validTo"),
         geometry=geojson_to_wkt_expression(payload.geometry),
         geometry_type=payload.geometry["type"],
     )
+    validate_feature_dates(feature.valid_from, feature.valid_to)
     session.add(feature)
     session.flush()
     replace_metadata(session, feature, payload.metadata)
@@ -243,6 +298,11 @@ def update_feature(feature_id: str, payload: FeatureUpdate, session: Session = D
         feature.name = payload.name.strip() or "Untitled feature"
     if payload.descriptionHtml is not None:
         feature.description_html = clean_html(payload.descriptionHtml)
+    if "validFrom" in payload.model_fields_set:
+        feature.valid_from = parse_iso_date(payload.validFrom, "validFrom")
+    if "validTo" in payload.model_fields_set:
+        feature.valid_to = parse_iso_date(payload.validTo, "validTo")
+    validate_feature_dates(feature.valid_from, feature.valid_to)
     if payload.geometry is not None:
         feature.geometry = geojson_to_wkt_expression(payload.geometry)
         feature.geometry_type = payload.geometry["type"]

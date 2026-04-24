@@ -1,8 +1,8 @@
-from datetime import datetime
+from datetime import date, datetime
 from uuid import uuid4
 
 from geoalchemy2 import Geometry
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy import Boolean, Date, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from server.app.db import Base
@@ -62,6 +62,8 @@ class Feature(Base):
     style_id: Mapped[int | None] = mapped_column(ForeignKey("styles.id"), nullable=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description_html: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    valid_from: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
+    valid_to: Mapped[date | None] = mapped_column(Date, nullable=True, index=True)
     geometry = mapped_column(Geometry(geometry_type="GEOMETRY", srid=4326, spatial_index=True), nullable=False)
     geometry_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

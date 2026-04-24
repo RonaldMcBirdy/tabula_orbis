@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { fetchFeatures, updateFeature } from "./api.js";
+import { useNavigate } from "react-router-dom";
+import { fetchFeatures, updateFeature } from "../api.js";
 
 const SETTLEMENT_CATEGORIES = [
   { id: "towns", label: "Towns" },
@@ -9,7 +10,9 @@ const SETTLEMENT_CATEGORIES = [
 
 const PAGE_SIZE = 25;
 
-export default function DataBrowserPage({ onBack }) {
+export default function ResearchPage() {
+  const navigate = useNavigate();
+
   const [allFeatures, setAllFeatures] = useState([]);
   const [loadingState, setLoadingState] = useState("loading");
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -165,7 +168,7 @@ export default function DataBrowserPage({ onBack }) {
     <div className="db-page">
       <div className="db-header">
         <div className="db-header-left">
-          <button className="db-back-btn" onClick={onBack} type="button">
+          <button className="db-back-btn" onClick={() => navigate("/map")} type="button">
             Back to map
           </button>
           <div>

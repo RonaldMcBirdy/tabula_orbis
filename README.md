@@ -43,7 +43,6 @@ python -m venv .venv
 pip install -r server\requirements.txt
 docker compose up -d db
 npm run backend:migrate
-npm run backend:import-kmz
 npm run backend:dev
 ```
 
@@ -54,6 +53,12 @@ npm run dev
 ```
 
 Vite proxies `/api` to `http://localhost:8000`. During the migration, the frontend falls back to generated static `/atlas` files if the API is unavailable.
+
+To seed or reseed the PostGIS atlas data from `data/byzantine-atlas.kmz`, run:
+
+```powershell
+npm run backend:import-kmz
+```
 
 ## Build And Preview
 

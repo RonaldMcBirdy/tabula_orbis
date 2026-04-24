@@ -20,9 +20,8 @@ The script will:
 2. Install backend Python dependencies.
 3. Start PostGIS with Docker Compose.
 4. Run database migrations.
-5. Import `data/byzantine-atlas.kmz` into PostGIS.
-6. Start the FastAPI backend in a new terminal.
-7. Start the Vite frontend in the current terminal.
+5. Start the FastAPI backend in a new terminal.
+6. Start the Vite frontend in the current terminal.
 
 Open:
 
@@ -41,7 +40,13 @@ After the first successful startup, you can skip dependency install:
 If you do not need to reload the KMZ into the database:
 
 ```powershell
-.\scripts\start-dev.ps1 -SkipInstall -SkipImport
+.\scripts\start-dev.ps1 -SkipInstall
+```
+
+To intentionally reload the KMZ into the database, pass `-Reseed`:
+
+```powershell
+.\scripts\start-dev.ps1 -SkipInstall -Reseed
 ```
 
 ## Manual Startup
@@ -73,3 +78,7 @@ docker compose down
 ```
 
 Use `docker compose down -v` only if you intentionally want to delete the local database volume and re-import from scratch.
+
+## Docker Desktop PATH Note
+
+On Windows, Docker Desktop can be running even when `docker.exe` is not available on your shell `PATH`. The startup script checks `PATH` first, then falls back to Docker Desktop's standard install path at `C:\Program Files\Docker\Docker\resources\bin\docker.exe`.

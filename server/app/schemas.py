@@ -39,6 +39,8 @@ class FeatureCreate(BaseModel):
     styleId: str | None = None
     name: str
     descriptionHtml: str = ""
+    validFrom: str | None = None
+    validTo: str | None = None
     metadata: dict[str, str] = Field(default_factory=dict)
     geometry: dict[str, Any]
 
@@ -48,6 +50,8 @@ class FeatureUpdate(BaseModel):
     styleId: str | None = None
     name: str | None = None
     descriptionHtml: str | None = None
+    validFrom: str | None = None
+    validTo: str | None = None
     metadata: dict[str, str] | None = None
     geometry: dict[str, Any] | None = None
 

@@ -1,5 +1,6 @@
 param(
   [switch]$SkipInstall,
+  [switch]$Reseed,
   [switch]$SkipImport
 )
 
@@ -9,8 +10,23 @@ Set-Location $root
 
 Write-Host "Starting Tabula Orbis local stack..." -ForegroundColor Cyan
 
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-  throw "Docker is required. Start Docker Desktop, then run this script again."
+function Resolve-DockerCommand {
+  $dockerCommand = Get-Command docker -ErrorAction SilentlyContinue
+  if ($dockerCommand) {
+    return $dockerCommand.Source
+  }
+
+  $dockerDesktopPath = "C:\Program Files\Docker\Docker\resources\bin\docker.exe"
+  if (Test-Path $dockerDesktopPath) {
+    return $dockerDesktopPath
+  }
+
+  return $null
+}
+
+$docker = Resolve-DockerCommand
+if (-not $docker) {
+  throw "Docker is required, but docker.exe was not found on PATH or in the standard Docker Desktop install path. Start Docker Desktop or add Docker to PATH, then run this script again."
 }
 
 if (-not (Test-Path ".venv")) {
@@ -29,12 +45,16 @@ if (-not $SkipInstall) {
 }
 
 Write-Host "Starting PostGIS..." -ForegroundColor Cyan
-docker compose up -d db
+& $docker compose up -d db
 
 Write-Host "Running database migrations..." -ForegroundColor Cyan
 & $python -m alembic -c server\alembic.ini upgrade head
 
-if (-not $SkipImport) {
+if ($SkipImport) {
+  Write-Host "-SkipImport is no longer needed; KMZ import is skipped by default." -ForegroundColor Yellow
+}
+
+if ($Reseed) {
   Write-Host "Importing KMZ atlas into PostGIS..." -ForegroundColor Cyan
   & $python -m server.scripts.import_kmz
 }
